@@ -51,7 +51,7 @@ jobs:
           cp .pio/build/amoled216/firmware.bin dist/deskdisplay-ota.bin
           cp .pio/build/amoled216/firmware.factory.bin dist/deskdisplay-factory.bin
           cp tools/deskdisplay-statusline.py dist/
-          NOTES=$(git log -1 --pretty=%B | head -c 1500)
+          NOTES=$(git log -1 --pretty=%B | grep -vE '^(Co-Authored-By|Claude-Session|Signed-off-by):' | head -c 1500)
           python3 - "$V" "$NOTES" "${{ github.repository }}" <<'PY'
           import json, sys
           v, notes, repo = sys.argv[1], sys.argv[2], sys.argv[3]
