@@ -14,56 +14,404 @@
 
 // ---------------------------------------------------------------- default layout
 static const char DEFAULT_LAYOUT[] = R"JSON({
-  "version": 1,
-  "grid": 12,
-  "home": 0,
-  "theme": {"bg": "#000000", "fg": "#F5F2EB", "muted": "#8C8A85", "accent": "#D97757",
-            "ok": "#5FB87A", "warn": "#E8B04B", "bad": "#E5534B", "track": "#232323"},
-  "night_theme": {"bg": "#000000", "fg": "#B5513A", "muted": "#6B2E22", "accent": "#B5513A",
-                  "ok": "#7A3A2A", "warn": "#9A4A30", "bad": "#C4553E", "track": "#1A0D0A"},
-  "pages": [
-    {"name": "Home", "enabled": true, "duration": 20, "widgets": [
-      {"type": "ring", "x": 0, "y": 0, "w": 12, "h": 12, "key": "claude.five_hour.used_percentage",
-       "thickness": 16, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14",
-       "value_pos": "tip", "badge": "5h {claude.five_hour.used_percentage:0}%", "badge_size": 16, "text": "", "caption": ""},
-      {"type": "ring", "x": 1, "y": 1, "w": 10, "h": 10, "key": "claude.seven_day.used_percentage",
-       "thickness": 8, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14",
-       "value_pos": "tip", "badge": "wk {claude.seven_day.used_percentage:0}%", "badge_size": 14, "text": "", "caption": ""},
-      {"type": "clock", "x": 2, "y": 3, "w": 8, "h": 3, "size": 96, "ampm": true, "color": "fg"},
-      {"type": "date", "x": 2, "y": 6, "w": 8, "h": 1, "fmt": "%A, %b %e", "size": 22, "color": "muted"},
-      {"type": "weather", "x": 3, "y": 7, "w": 6, "h": 2, "icon_size": 48, "size": 32, "style": "row", "show_desc": false},
-      {"type": "text", "x": 2, "y": 10, "w": 8, "h": 1, "size": 16, "color": "muted", "align": "center",
-       "text": "Session resets in {claude.five_hour.resets_at|in}"}
-    ]},
-    {"name": "Claude", "enabled": true, "duration": 15, "widgets": [
-      {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 28, "color": "fg", "align": "center", "text": "Claude usage"},
-      {"type": "bar", "x": 1, "y": 2, "w": 10, "h": 3, "key": "claude.five_hour.used_percentage", "label": "Current session",
-       "sub": "Resets in {claude.five_hour.resets_at|in}", "size": 22, "bar_h": 34, "value_pos": "inside", "value_size": 20,
-       "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14"},
-      {"type": "bar", "x": 1, "y": 5, "w": 10, "h": 3, "key": "claude.seven_day.used_percentage", "label": "This week",
-       "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}", "size": 22, "bar_h": 34, "value_pos": "inside", "value_size": 20,
-       "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14"},
-      {"type": "text", "x": 1, "y": 8, "w": 10, "h": 1, "size": 18, "color": "muted", "align": "center",
-       "text": "Context {claude.context_window.used_percentage:0}%  {claude.model.display_name}"},
-      {"type": "text", "x": 1, "y": 10, "w": 10, "h": 1, "size": 16, "color": "muted", "align": "center",
-       "text": "Updated {claude.updated|ago}"}
-    ]},
-    {"name": "Weather", "enabled": true, "duration": 15, "widgets": [
-      {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 24, "color": "muted", "align": "center", "text": "{weather.place}"},
-      {"type": "weather", "x": 1, "y": 2, "w": 10, "h": 4, "icon_size": 128, "size": 64, "style": "row", "show_desc": false},
-      {"type": "text", "x": 1, "y": 6, "w": 10, "h": 1, "size": 22, "color": "fg", "align": "center",
-       "text": "{weather.desc}   H {weather.hi:0}°  L {weather.lo:0}°   {weather.wind:0} {weather.wind_unit}"},
-      {"type": "forecast", "x": 0, "y": 7, "w": 12, "h": 4, "mode": "daily", "count": 5, "icon_size": 32, "size": 18, "show_wind": true}
-    ]},
-    {"name": "Info", "enabled": true, "duration": 10, "widgets": [
-      {"type": "text", "x": 1, "y": 1, "w": 10, "h": 1, "size": 24, "color": "fg", "align": "center", "text": "{sys.name}"},
-      {"type": "qr", "x": 4, "y": 3, "w": 4, "h": 4},
-      {"type": "text", "x": 1, "y": 8, "w": 10, "h": 1, "size": 20, "color": "muted", "align": "center", "text": "{sys.url}"},
-      {"type": "text", "x": 1, "y": 9, "w": 10, "h": 1, "size": 18, "color": "muted", "align": "center",
-       "text": "{sym:wifi} {sys.rssi}dBm   {sym:battery} {sys.battery_text}"},
-      {"type": "text", "x": 1, "y": 10, "w": 10, "h": 1, "size": 16, "color": "muted", "align": "center", "text": "v{sys.version}  up {sys.uptime_text}"}
-    ]}
-  ]
+ "version": 1,
+ "grid": 12,
+ "home": 0,
+ "theme": {
+  "bg": "#000000",
+  "fg": "#F5F2EB",
+  "muted": "#8C8A85",
+  "accent": "#D97757",
+  "ok": "#5FB87A",
+  "warn": "#E8B04B",
+  "bad": "#E5534B",
+  "track": "#232323"
+ },
+ "night_theme": {
+  "bg": "#000000",
+  "fg": "#B5513A",
+  "muted": "#6B2E22",
+  "accent": "#B5513A",
+  "ok": "#7A3A2A",
+  "warn": "#9A4A30",
+  "bad": "#C4553E",
+  "track": "#1A0D0A"
+ },
+ "pages": [
+  {
+   "name": "Home",
+   "enabled": true,
+   "duration": 20,
+   "widgets": [
+    {
+     "type": "ring",
+     "x": 0,
+     "y": 0,
+     "w": 12,
+     "h": 12,
+     "key": "claude.five_hour.used_percentage",
+     "thickness": 16,
+     "start": 135,
+     "sweep": 270,
+     "color_mode": "fixed",
+     "color": "#D97757",
+     "track": "#2A1A14",
+     "value_pos": "tip",
+     "badge": "5h {claude.five_hour.used_percentage:0}%",
+     "badge_size": 16,
+     "text": "",
+     "caption": ""
+    },
+    {
+     "type": "ring",
+     "x": 1,
+     "y": 1,
+     "w": 10,
+     "h": 10,
+     "key": "claude.seven_day.used_percentage",
+     "thickness": 8,
+     "start": 135,
+     "sweep": 270,
+     "color_mode": "fixed",
+     "color": "#D97757",
+     "track": "#2A1A14",
+     "value_pos": "tip",
+     "badge": "wk {claude.seven_day.used_percentage:0}%",
+     "badge_size": 14,
+     "text": "",
+     "caption": ""
+    },
+    {
+     "type": "clock",
+     "x": 2,
+     "y": 3,
+     "w": 8,
+     "h": 3,
+     "size": 96,
+     "ampm": true,
+     "color": "fg"
+    },
+    {
+     "type": "date",
+     "x": 2,
+     "y": 6,
+     "w": 8,
+     "h": 1,
+     "fmt": "%A, %b %e",
+     "size": 22,
+     "color": "muted"
+    },
+    {
+     "type": "weather",
+     "x": 3,
+     "y": 7,
+     "w": 6,
+     "h": 2,
+     "icon_size": 48,
+     "size": 32,
+     "style": "row",
+     "show_desc": false
+    },
+    {
+     "type": "text",
+     "x": 2,
+     "y": 10,
+     "w": 8,
+     "h": 1,
+     "size": 16,
+     "color": "muted",
+     "align": "center",
+     "text": "Session resets in {claude.five_hour.resets_at|in}"
+    }
+   ]
+  },
+  {
+   "name": "Claude",
+   "enabled": true,
+   "duration": 15,
+   "widgets": [
+    {
+     "type": "text",
+     "x": 1,
+     "y": 0,
+     "w": 10,
+     "h": 2,
+     "size": 28,
+     "color": "fg",
+     "align": "center",
+     "text": "Claude usage"
+    },
+    {
+     "type": "bar",
+     "x": 1,
+     "y": 2,
+     "w": 10,
+     "h": 3,
+     "key": "claude.five_hour.used_percentage",
+     "label": "Current session",
+     "sub": "Resets in {claude.five_hour.resets_at|in}",
+     "size": 22,
+     "bar_h": 34,
+     "value_pos": "inside",
+     "value_size": 20,
+     "color_mode": "fixed",
+     "color": "#D97757",
+     "track": "#2A1A14"
+    },
+    {
+     "type": "bar",
+     "x": 1,
+     "y": 5,
+     "w": 10,
+     "h": 3,
+     "key": "claude.seven_day.used_percentage",
+     "label": "This week",
+     "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}",
+     "size": 22,
+     "bar_h": 34,
+     "value_pos": "inside",
+     "value_size": 20,
+     "color_mode": "fixed",
+     "color": "#D97757",
+     "track": "#2A1A14"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 8,
+     "w": 10,
+     "h": 1,
+     "size": 18,
+     "color": "muted",
+     "align": "center",
+     "text": "Context {claude.context_window.used_percentage:0}%  {claude.model.display_name}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 10,
+     "w": 10,
+     "h": 1,
+     "size": 16,
+     "color": "muted",
+     "align": "center",
+     "text": "Updated {claude.updated|ago}"
+    }
+   ]
+  },
+  {
+   "name": "Weather",
+   "enabled": true,
+   "duration": 15,
+   "widgets": [
+    {
+     "type": "text",
+     "x": 1,
+     "y": 0,
+     "w": 10,
+     "h": 2,
+     "size": 24,
+     "color": "muted",
+     "align": "center",
+     "text": "{weather.place}"
+    },
+    {
+     "type": "weather",
+     "x": 1,
+     "y": 2,
+     "w": 10,
+     "h": 4,
+     "icon_size": 128,
+     "size": 64,
+     "style": "row",
+     "show_desc": false
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 6,
+     "w": 10,
+     "h": 1,
+     "size": 22,
+     "color": "fg",
+     "align": "center",
+     "text": "{weather.desc}   H {weather.hi:0}°  L {weather.lo:0}°   {weather.wind:0} {weather.wind_unit}"
+    },
+    {
+     "type": "forecast",
+     "x": 0,
+     "y": 7,
+     "w": 12,
+     "h": 4,
+     "mode": "daily",
+     "count": 5,
+     "icon_size": 32,
+     "size": 18,
+     "show_wind": true
+    }
+   ]
+  },
+  {
+   "name": "Info",
+   "enabled": true,
+   "duration": 10,
+   "widgets": [
+    {
+     "type": "text",
+     "x": 1,
+     "y": 1,
+     "w": 10,
+     "h": 1,
+     "size": 24,
+     "color": "fg",
+     "align": "center",
+     "text": "{sys.name}"
+    },
+    {
+     "type": "qr",
+     "x": 4,
+     "y": 3,
+     "w": 4,
+     "h": 4
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 8,
+     "w": 10,
+     "h": 1,
+     "size": 20,
+     "color": "muted",
+     "align": "center",
+     "text": "{sys.url}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 9,
+     "w": 10,
+     "h": 1,
+     "size": 18,
+     "color": "muted",
+     "align": "center",
+     "text": "{sym:wifi} {sys.rssi}dBm   {sym:battery} {sys.battery_text}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 10,
+     "w": 10,
+     "h": 1,
+     "size": 16,
+     "color": "muted",
+     "align": "center",
+     "text": "v{sys.version}  up {sys.uptime_text}"
+    }
+   ]
+  },
+  {
+   "name": "Printer",
+   "enabled": false,
+   "duration": 20,
+   "bg": "#000000",
+   "widgets": [
+    {
+     "type": "clock",
+     "x": 3,
+     "y": 0,
+     "w": 6,
+     "h": 2,
+     "size": 40,
+     "ampm": true,
+     "color": "#FFFFFF",
+     "ampm_color": "#9A9A9A"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 2,
+     "w": 10,
+     "h": 1,
+     "size": 18,
+     "color": "#9A9A9A",
+     "align": "center",
+     "overflow": "clip",
+     "text": "{bambu.job}"
+    },
+    {
+     "type": "text",
+     "x": 0,
+     "y": 3,
+     "w": 12,
+     "h": 3,
+     "size": 96,
+     "color": "#FFFFFF",
+     "align": "center",
+     "text": "{bambu.percent:0}%"
+    },
+    {
+     "type": "bar",
+     "x": 1,
+     "y": 6,
+     "w": 10,
+     "h": 1,
+     "key": "bambu.percent",
+     "label": "",
+     "sub": "",
+     "bar_h": 24,
+     "value_pos": "inside",
+     "show_value": false,
+     "color_mode": "fixed",
+     "color": "#00AE42",
+     "track": "#2B2B2B"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 7,
+     "w": 10,
+     "h": 1,
+     "size": 24,
+     "color": "#FFFFFF",
+     "align": "center",
+     "text": "Layer {bambu.layer:0} / {bambu.total_layers:0}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 8,
+     "w": 10,
+     "h": 1,
+     "size": 22,
+     "color": "#00AE42",
+     "align": "center",
+     "text": "Done at {bambu.eta|time}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 9,
+     "w": 10,
+     "h": 1,
+     "size": 18,
+     "color": "#9A9A9A",
+     "align": "center",
+     "text": "{bambu.remaining_text} left  ·  {bambu.state_text}"
+    },
+    {
+     "type": "text",
+     "x": 1,
+     "y": 10,
+     "w": 10,
+     "h": 1,
+     "size": 16,
+     "color": "#9A9A9A",
+     "align": "center",
+     "text": "Nozzle {bambu.nozzle:0}°   Bed {bambu.bed:0}°"
+    }
+   ]
+  }
+ ]
 })JSON";
 
 // ---------------------------------------------------------------- PSRAM JSON allocator

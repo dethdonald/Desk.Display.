@@ -17,6 +17,7 @@
 #include "fetcher.h"
 #include "web.h"
 #include "sound.h"
+#include "bambu.h"
 
 // Keep a freshly-installed firmware in "pending verify" until it has run healthily for a while.
 // If it crashes or reboots before that, the bootloader rolls back to the previous version.
@@ -158,12 +159,16 @@ static void sysKeysTick() {
   dsSetStr("sys.page_name", uiPageName(uiPageIndex()));
 }
 
+static int s_chargeMa = 0;
+
 static void applyAllSettings() {
   gTimeH24 = S("time")["h24"] | false;
+  s_chargeMa = hwSetChargeCurrentFor(S("battery")["capacity_mah"] | 1000);
   JsonObject t = S("touch");
   hwSetTouchOrientation(t["swap_xy"] | true, t["mirror_x"] | true, t["mirror_y"] | false);
   netApplySettings();
   fetcherApplySettings();
+  bambuApplySettings();
   inputApplySettings();
   soundApplySettings();
   webApplySettings();
@@ -281,6 +286,7 @@ void setup() {
   JsonObject t = S("touch");
   hwSetTouchOrientation(t["swap_xy"] | true, t["mirror_x"] | true, t["mirror_y"] | false);
 
+  s_chargeMa = hwSetChargeCurrentFor(S("battery")["capacity_mah"] | 1000);
   bootStep("sound", false);
   soundInit();
   bootStep("layout");
@@ -292,6 +298,7 @@ void setup() {
   bootStep("data", false);
   sysKeysTick();
   fetcherStart();
+  bambuStart();
   bootStep("web", false);
   webApplySettings();
   webSnapshotLayout();

@@ -278,6 +278,18 @@ BatteryInfo hwBattery() {
   return b;
 }
 
+// Charge at no more than 0.5C for the installed cell (AXP2101 steps: 100..200 by 25, then 300..1000 by 100).
+int hwSetChargeCurrentFor(int capacityMah) {
+  if (!s_hasPmu) return 0;
+  static const int steps[] = {100, 125, 150, 175, 200, 300, 400, 500, 600, 700, 800, 900, 1000};
+  int target = max(100, capacityMah / 2);
+  int idx = 0;
+  for (int i = 0; i < (int)(sizeof(steps) / sizeof(int)); i++) if (steps[i] <= target) idx = i;
+  s_pmu.setChargerConstantCurr((uint8_t)(XPOWERS_AXP2101_CHG_CUR_100MA + idx));
+  LOGI("battery: %d mAh cell -> charging at %d mA", capacityMah, steps[idx]);
+  return steps[idx];
+}
+
 bool hwPollPowerKeyShort() {
   if (!s_hasPmu) return false;
   s_pmu.getIrqStatus();

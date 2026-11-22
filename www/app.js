@@ -437,7 +437,9 @@ const KEY_HINTS = {
   "claude.updated": "Last push time", "weather.temp": "Temperature", "weather.feels": "Feels like", "weather.desc": "Conditions", "weather.hi": "Today's high",
   "weather.lo": "Today's low", "weather.humidity": "Humidity %", "weather.wind": "Wind", "weather.pp": "Rain chance %", "weather.wind_unit": "mph or km/h", "weather.d0.wind": "Today's max wind", "weather.sunrise": "Sunrise", "weather.sunset": "Sunset",
   "weather.icon": "Weather glyph", "weather.place": "Location name", "sys.ip": "IP address", "sys.url": "Settings URL", "sys.battery": "Battery %", "sys.battery_text": "Battery text",
-  "sys.rssi": "Wi-Fi signal", "sys.uptime_text": "Uptime", "sys.name": "Device name", "sys.page_name": "Current page" };
+  "sys.rssi": "Wi-Fi signal", "sys.uptime_text": "Uptime", "sys.name": "Device name", "sys.page_name": "Current page", "bambu.percent": "Print % complete", "bambu.layer": "Current layer", "bambu.total_layers": "Total layers",
+  "bambu.eta": "Print finish time", "bambu.remaining_text": "Print time left", "bambu.state_text": "Printer state", "bambu.job": "Print job name",
+  "bambu.nozzle": "Nozzle temp", "bambu.bed": "Bed temp", "bambu.connected": "Printer connected (1/0)" };
 const DATE_PRESETS = [["%A, %b %e", "Friday, Nov 21"], ["%a %b %e", "Fri Nov 21"], ["%B %e, %Y", "November 21, 2026"], ["%m/%d", "11/21"], ["%A", "Friday"], ["%b %e", "Nov 21"]];
 
 function propSchema(t) {
@@ -509,6 +511,10 @@ function drawEditor() {
     h("div", { class: "row" },
       h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); L.pages.push({ name: "Page " + (L.pages.length + 1), enabled: true, duration: 15, widgets: [] }); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor(); } }, "+ Page"),
       h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); const c = clone(Editor.pg()); c.name += " copy"; L.pages.splice(Editor.page + 1, 0, c); Editor.page++; drawEditor(); } }, "Duplicate"),
+      sel([["", "+ Preset page…"], ["Printer", "Bambu printer"]], "", async v => {
+        if (!v) return; const pg = await presetPage(v); if (!pg) return toast("Preset not found", true);
+        Editor.snapshot(); pg.enabled = true; L.pages.push(pg); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor();
+      }),
       h("button", { class: "btn sm danger", disabled: L.pages.length < 2, onclick: () => { if (!confirm("Delete this page?")) return; Editor.snapshot(); L.pages.splice(Editor.page, 1); if ((L.home ?? 0) >= L.pages.length) L.home = 0; Editor.fix(); drawEditor(); } }, "Delete")));
   const pg = Editor.pg();
   const pageProps = h("div", { class: "card stack" }, h("h2", {}, "This page"),
@@ -727,6 +733,23 @@ async function applyTemplate(name) {
   Editor.layout = clone(T[name]); Editor.page = 0; Editor.sel = -1; Editor.dirty = true; drawEditor();
 }
 
+async function presetPage(name) {
+  const def = await api("/api/layout/default");
+  const pg = (def.pages || []).find(p => p.name === name);
+  return pg ? clone(pg) : null;
+}
+async function addPrinterPageToDevice() {
+  try {
+    const lay = await api("/api/layout");
+    let pg = lay.pages.find(p => p.name === "Printer");
+    if (pg) pg.enabled = true;
+    else { pg = await presetPage("Printer"); if (!pg) throw new Error("preset missing"); pg.enabled = true; lay.pages.push(pg); }
+    await api("/api/layout", { body: lay });
+    S.layout = lay; Editor.layout = null;
+    toast("Printer page added to the display");
+  } catch (e) { toast("Couldn't add the page: " + e.message, true); }
+}
+
 // ============================================================ CONTROLS
 const ACTIONS = [["next", "Next page"], ["prev", "Previous page"], ["home", "Go to home page"], ["sleep_toggle", "Sleep / wake screen"], ["night_toggle", "Night mode on/off"], ["show_qr", "Show settings QR"], ["refresh", "Refresh data"]];
 const EVENTS = {
@@ -932,6 +955,23 @@ TABS.settings = () => {
       check("Use night theme colors", get(s, "display.night.use_night_theme", true), v => set(s, "display.night.use_night_theme", v)),
       check("Turn the screen off at night (touch to wake)", get(s, "display.night.screen_off", false), v => set(s, "display.night.screen_off", v)),
       saveBtn("Save display", () => saveSettings({ display: s.display }))),
+    sec("sec-bambu", "Bambu Lab printer",
+      h("p", { class: "small muted" }, "Shows print progress from your printer over your home network (read-only, works with cloud mode too). On the printer's screen: the network settings show the IP address and access code; the device info shows the serial number."),
+      check("Enabled", get(s, "bambu.enabled", false), v => set(s, "bambu.enabled", v)),
+      field("Printer IP address", inp("text", get(s, "bambu.ip"), v => set(s, "bambu.ip", v.trim()), { placeholder: "192.168.1.50" })),
+      field("Serial number", inp("text", get(s, "bambu.serial"), v => set(s, "bambu.serial", v.trim().toUpperCase()), { placeholder: "e.g. 03919C4xxxxxxxx" })),
+      field("Access code", inp("password", get(s, "bambu.access_code"), v => set(s, "bambu.access_code", v.trim()), { autocomplete: "off", placeholder: "8 characters" })),
+      h("div", { class: "small" }, "Status: ", S.data["bambu.connected"] === 1
+        ? h("b", { style: { color: "var(--ok)" } }, `connected · ${S.data["bambu.state_text"] || "?"}${S.data["bambu.percent"] !== undefined ? " · " + S.data["bambu.percent"] + "%" : ""}`)
+        : h("b", { style: { color: "var(--warn)" } }, S.data["bambu.error"] || "not connected")),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ bambu: s.bambu }) }, "Save printer"),
+        h("button", { class: "btn", onclick: addPrinterPageToDevice }, "Add printer page to my layout"))),
+    sec("sec-battery", "Battery",
+      h("p", { class: "small muted" }, "Set this to the capacity printed on your battery. The display charges at half that rate (0.5C), which is gentle on small cells."),
+      field("Battery capacity (mAh)", inp("number", get(s, "battery.capacity_mah", 1000), v => set(s, "battery.capacity_mah", v), { min: 100, max: 5000 }),
+        "charges at ~" + Math.max(100, Math.min(1000, Math.floor((get(s, "battery.capacity_mah", 1000)) / 2))) + " mA"),
+      h("div", { class: "small muted" }, S.status.battery?.present ? `Now: ${S.status.battery.percent}% · ${S.status.battery.mv} mV${S.status.battery.charging ? " · charging" : ""}` : "No battery detected"),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ battery: s.battery }) }, "Save battery"))),
     sec("sec-sound", "Sound",
       h("div", { class: "small" }, "Audio chip: ", h("b", { style: { color: S.status.sound === "ready" ? "var(--ok)" : "var(--warn)" } }, S.status.sound || "unknown (update firmware)")),
       check("Sounds on", get(s, "sound.enabled", true), v => set(s, "sound.enabled", v)),

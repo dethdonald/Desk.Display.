@@ -20,6 +20,8 @@ static const char DEFAULTS[] = R"JSON({
     "sleep_after_min": 0,
     "night": {"enabled": true, "start": "22:30", "end": "07:00", "brightness": 25, "use_night_theme": true, "screen_off": false}
   },
+  "battery": {"capacity_mah": 1000},
+  "bambu":   {"enabled": false, "ip": "", "serial": "", "access_code": ""},
   "touch":   {"swap_xy": true, "mirror_x": true, "mirror_y": false},
   "controls": {
     "bindings": {
@@ -53,7 +55,7 @@ static const char DEFAULTS[] = R"JSON({
 
 const char *settingsDefaultsJson() { return DEFAULTS; }
 
-static const char *SECRET_PATHS[][2] = {{"wifi", "pass"}, {"admin", "pass"}, {"api", "token"}};
+static const char *SECRET_PATHS[][2] = {{"wifi", "pass"}, {"admin", "pass"}, {"api", "token"}, {"bambu", "access_code"}};
 
 // Recursively merge src into dst (objects merge, everything else replaces).
 static void deepMerge(JsonVariant dst, JsonVariantConst src) {

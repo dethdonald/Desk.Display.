@@ -30,7 +30,8 @@ bool hwReadAccel(float &x, float &y, float &z);   // in g
 
 bool hwHasPmu();
 BatteryInfo hwBattery();
-bool hwPollPowerKeyShort();            // true once per short press of PWR
+bool hwPollPowerKeyShort();
+int hwSetChargeCurrentFor(int capacityMah);   // returns the charge current set (mA)            // true once per short press of PWR
 
 bool hwHasRtc();
 bool hwRtcRead(time_t &utc);

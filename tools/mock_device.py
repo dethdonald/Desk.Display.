@@ -40,6 +40,9 @@ for i in range(6):
     DATA[f"weather.d{i}.icon"] = icons[i % len(icons)]
     DATA[f"weather.d{i}.wind"] = 6 + 3 * i
 DATA["weather.wind_unit"] = "mph"
+DATA.update({"bambu.connected": 1, "bambu.state": "RUNNING", "bambu.state_text": "Printing", "bambu.job": "Benchy_0.2mm_PLA",
+             "bambu.percent": 63, "bambu.layer": 118, "bambu.total_layers": 187, "bambu.remaining_min": 42,
+             "bambu.remaining_text": "42m", "bambu.eta": now + 42 * 60, "bambu.nozzle": 219.6, "bambu.bed": 65.1})
 for i in range(24):
     DATA[f"weather.h{i}.t"] = now + i * 3600
     DATA[f"weather.h{i}.temp"] = 45 + (i % 6)

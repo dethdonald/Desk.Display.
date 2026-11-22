@@ -298,6 +298,7 @@ void webTick() {
   BatteryInfo b = hwBattery();
   JsonObject bt = d["battery"].to<JsonObject>();
   bt["present"] = b.present; bt["charging"] = b.charging; bt["usb"] = b.usb; bt["percent"] = b.percent; bt["mv"] = b.mv;
+  bt["capacity_mah"] = S("battery")["capacity_mah"] | 1000; bt["charge_ma"] = max(100, min(1000, (int)(S("battery")["capacity_mah"] | 1000) / 2));
   JsonObject u = d["ui"].to<JsonObject>();
   u["page"] = uiPageIndex(); u["pages"] = uiPageCount(); u["page_name"] = uiPageName(uiPageIndex());
   u["sleeping"] = uiSleeping(); u["night"] = uiNight(); u["rotation"] = hwRotation() * 90; u["orientation"] = inputOrientation();
