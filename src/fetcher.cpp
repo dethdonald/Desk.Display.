@@ -122,14 +122,15 @@ static void fetchWeather(const FetchCfg &cfg) {
   if (!cfg.wxEnabled) return;
   if (!cfg.hasLoc) { dsSetStr("weather.desc", "Set location"); dsSetStr("weather.place", "Weather: set a location in Settings"); return; }
   bool imperial = cfg.units != "metric";
-  char url[512];
-  snprintf(url, sizeof url,
+  char url[1024];
+  int ulen = snprintf(url, sizeof url,
            "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day,precipitation"
            "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
            "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max"
            "&timezone=auto&timeformat=unixtime&forecast_days=6&forecast_hours=24%s",
            cfg.lat, cfg.lon, imperial ? "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch" : "");
+  if (ulen >= (int)sizeof url) { dsSetStr("weather.error", "request URL too long"); LOGI("weather: URL too long (%d)", ulen); return; }
   JsonDocument doc;
   String err;
   if (!httpGetJson(url, doc, err)) { LOGI("weather: %s", err.c_str()); dsSetStr("weather.error", err); return; }
