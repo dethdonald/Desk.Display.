@@ -23,21 +23,25 @@ static const char DEFAULT_LAYOUT[] = R"JSON({
   "pages": [
     {"name": "Home", "enabled": true, "duration": 20, "widgets": [
       {"type": "ring", "x": 0, "y": 0, "w": 12, "h": 12, "key": "claude.five_hour.used_percentage",
-       "thickness": 14, "start": 135, "sweep": 270, "color_mode": "threshold", "warn": 60, "bad": 85, "text": "", "caption": ""},
+       "thickness": 16, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14",
+       "value_pos": "tip", "badge": "5h {claude.five_hour.used_percentage:0}%", "badge_size": 16, "text": "", "caption": ""},
       {"type": "ring", "x": 1, "y": 1, "w": 10, "h": 10, "key": "claude.seven_day.used_percentage",
-       "thickness": 6, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "accent", "text": "", "caption": ""},
+       "thickness": 8, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14",
+       "value_pos": "tip", "badge": "wk {claude.seven_day.used_percentage:0}%", "badge_size": 14, "text": "", "caption": ""},
       {"type": "clock", "x": 2, "y": 3, "w": 8, "h": 3, "size": 96, "ampm": true, "color": "fg"},
       {"type": "date", "x": 2, "y": 6, "w": 8, "h": 1, "fmt": "%A, %b %e", "size": 22, "color": "muted"},
       {"type": "weather", "x": 3, "y": 7, "w": 6, "h": 2, "icon_size": 48, "size": 32, "style": "row", "show_desc": false},
-      {"type": "text", "x": 2, "y": 10, "w": 8, "h": 1, "size": 18, "color": "muted", "align": "center",
-       "text": "5h {claude.five_hour.used_percentage:0}%   wk {claude.seven_day.used_percentage:0}%"}
+      {"type": "text", "x": 2, "y": 10, "w": 8, "h": 1, "size": 16, "color": "muted", "align": "center",
+       "text": "Session resets in {claude.five_hour.resets_at|in}"}
     ]},
     {"name": "Claude", "enabled": true, "duration": 15, "widgets": [
       {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 28, "color": "fg", "align": "center", "text": "Claude usage"},
       {"type": "bar", "x": 1, "y": 2, "w": 10, "h": 3, "key": "claude.five_hour.used_percentage", "label": "Current session",
-       "sub": "Resets in {claude.five_hour.resets_at|in}", "size": 22, "bar_h": 18, "warn": 60, "bad": 85, "color_mode": "threshold"},
+       "sub": "Resets in {claude.five_hour.resets_at|in}", "size": 22, "bar_h": 34, "value_pos": "inside", "value_size": 20,
+       "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14"},
       {"type": "bar", "x": 1, "y": 5, "w": 10, "h": 3, "key": "claude.seven_day.used_percentage", "label": "This week",
-       "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}", "size": 22, "bar_h": 18, "warn": 70, "bad": 90, "color_mode": "threshold"},
+       "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}", "size": 22, "bar_h": 34, "value_pos": "inside", "value_size": 20,
+       "color_mode": "fixed", "color": "#D97757", "track": "#2A1A14"},
       {"type": "text", "x": 1, "y": 8, "w": 10, "h": 1, "size": 18, "color": "muted", "align": "center",
        "text": "Context {claude.context_window.used_percentage:0}%  {claude.model.display_name}"},
       {"type": "text", "x": 1, "y": 10, "w": 10, "h": 1, "size": 16, "color": "muted", "align": "center",
@@ -76,7 +80,9 @@ struct Widget {
   String type;
   JsonObjectConst p;
   lv_obj_t *box = nullptr;
-  lv_obj_t *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+  lv_obj_t *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr, *e = nullptr;
+  int16_t mode = 0;                  // bar: 0 right, 1 inside, 2 above   ring: 0 center, 1 tip badge, 2 none
+  int16_t gx = 0, gy = 0, gw = 0, gh = 0, fy = 0;   // cached geometry (bar rect / ring centre+radius)
   std::vector<lv_obj_t *> cols;      // forecast columns: [label, icon, temp] * n
   String cache[4];
   int32_t lastVal = INT32_MIN;
@@ -236,26 +242,44 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
       lv_obj_align(w.a, LV_ALIGN_LEFT_MID, 0, 0);
     }
   } else if (w.type == "bar") {
-    lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(w.box, 6, 0);
-    lv_obj_t *row = plainObj(w.box);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    w.a = mkLabel(row, size, fg);                       // label
-    lv_obj_align(w.a, LV_ALIGN_LEFT_MID, 0, 0);
-    w.c = mkLabel(row, size, fg);                       // value
-    lv_obj_align(w.c, LV_ALIGN_RIGHT_MID, 0, 0);
+    const char *vp = p["value_pos"] | "right";
+    w.mode = !strcmp(vp, "inside") ? 1 : !strcmp(vp, "follow") ? 2 : 0;
+    int vsz = p["value_size"] | size;
+    int lh = lv_font_get_line_height(fontFor(size));
+    int vlh = lv_font_get_line_height(fontFor(vsz));
+    int slh = lv_font_get_line_height(fontFor(p["sub_size"] | 16));
+    int bh = p["bar_h"] | 14;
+    bool hasLabel = strlen(p["label"] | "") > 0 || w.mode == 0;
+    bool hasSub = strlen(p["sub"] | "") > 0;
+    int cw = W - 2 * pad, ch = H - 2 * pad;
+    int total = (hasLabel ? lh + 6 : 0) + (w.mode == 2 ? vlh + 2 : 0) + bh + (hasSub ? 6 + slh : 0);
+    int y = max(0, (ch - total) / 2);
+    lv_color_t lc = themeColor(p["label_color"] | "fg", s_theme.fg);   // text stays neutral; "color" is the bar fill
+    w.a = mkLabel(w.box, size, lc);                     // label (top left)
+    lv_obj_set_pos(w.a, 0, y);
+    if (w.mode == 0) { w.c = mkLabel(w.box, vsz, lc); lv_obj_align(w.c, LV_ALIGN_TOP_RIGHT, 0, y); }
+    if (hasLabel) y += lh + 6;
+    if (w.mode == 2) { w.fy = y; y += vlh + 2; }
     w.d = lv_bar_create(w.box);
     lv_obj_clear_flag(w.d, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(w.d, LV_PCT(100), p["bar_h"] | 14);
+    lv_obj_set_pos(w.d, 0, y);
+    lv_obj_set_size(w.d, cw, bh);
     lv_bar_set_range(w.d, 0, 1000);
     lv_obj_set_style_bg_color(w.d, themeColor(p["track"] | "track", s_theme.track), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(w.d, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(w.d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_radius(w.d, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+    w.gx = 0; w.gy = y; w.gw = cw; w.gh = bh;
+    if (w.mode == 1) w.e = mkLabel(w.d, vsz, lc);       // rides inside the bar
+    if (w.mode == 2) w.e = mkLabel(w.box, vsz, lc);     // rides above the bar
+    y += bh;
     w.b = mkLabel(w.box, p["sub_size"] | 16, s_theme.muted);  // sub text
+    lv_obj_set_pos(w.b, 0, y + 6);
+    if (!hasSub) lv_obj_add_flag(w.b, LV_OBJ_FLAG_HIDDEN);
   } else if (w.type == "ring") {
     int side = min(W, H) - 2 * pad;
+    const char *vp = p["value_pos"] | "center";
+    w.mode = !strcmp(vp, "tip") ? 1 : !strcmp(vp, "none") ? 2 : 0;
     w.d = lv_arc_create(w.box);
     lv_obj_set_size(w.d, side, side);
     lv_obj_center(w.d);
@@ -277,6 +301,15 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
     lv_obj_align(w.a, LV_ALIGN_CENTER, 0, -(int)(p["caption_size"] | 16) / 2);
     w.b = mkLabel(w.box, p["caption_size"] | 16, s_theme.muted);
     lv_obj_align(w.b, LV_ALIGN_CENTER, 0, size / 2 + 4);
+    w.gx = (W - 2 * pad) / 2; w.gy = (H - 2 * pad) / 2; w.gw = side / 2 - th / 2;
+    if (w.mode == 1) {                                  // badge riding the arc tip
+      w.e = mkLabel(w.box, p["badge_size"] | 16, s_theme.bg);
+      lv_obj_set_style_bg_opa(w.e, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(w.e, LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_pad_hor(w.e, 8, 0);
+      lv_obj_set_style_pad_ver(w.e, 2, 0);
+      lv_obj_add_flag(w.e, LV_OBJ_FLAG_HIDDEN);
+    }
   } else if (w.type == "weather") {
     bool row = strcmp(p["style"] | "row", "row") == 0;
     lv_obj_set_flex_flow(w.box, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -378,7 +411,8 @@ static void updateWidget(Widget &w, bool force) {
     double mn = p["min"] | 0.0, mx = p["max"] | 100.0;
     double frac = has && mx > mn ? constrain((v - mn) / (mx - mn), 0.0, 1.0) : 0.0;
     int32_t q = has ? (int32_t)lround(frac * 1000) : -1;
-    if (q != w.lastVal) {
+    bool changed = q != w.lastVal;
+    if (changed) {
       w.lastVal = q;
       lv_color_t col = valueColor(p, v, has);
       if (w.type == "bar") {
@@ -390,17 +424,54 @@ static void updateWidget(Widget &w, bool force) {
         lv_obj_set_style_arc_opa(w.d, q > 0 ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_INDICATOR);
       }
     }
+    String vt = has ? dsFormatNumber(v, 0) + ((p["unit"] | "%")) : String("--");
     if (w.type == "bar") {
       setText(w.a, w.cache[0], dsRender(p["label"] | ""));
-      String vt = has ? dsFormatNumber(v, 0) + ((p["unit"] | "%")) : String("--");
       if (!(p["show_value"] | true)) vt = "";
-      setText(w.c, w.cache[2], vt);
+      if (w.mode == 0) setText(w.c, w.cache[2], vt);
       setText(w.b, w.cache[1], has ? dsRender(p["sub"] | "") : String((const char *)(p["empty"] | "No data yet")));
+      if (w.e && (w.cache[3] != vt || changed || force)) {
+        w.cache[3] = vt;
+        lv_label_set_text(w.e, vt.c_str());
+        lv_point_t sz;
+        lv_txt_get_size(&sz, vt.c_str(), fontFor(p["value_size"] | (int)(p["size"] | 24)), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        int fillW = (int)lround(frac * w.gw);
+        if (w.mode == 1) {
+          int padIn = max(8, w.gh / 3);
+          bool inside = fillW >= sz.x + 2 * padIn;
+          int x = inside ? fillW - sz.x - padIn : fillW + padIn;
+          if (x + sz.x > w.gw) x = w.gw - sz.x - padIn;
+          lv_obj_set_pos(w.e, x, (w.gh - sz.y) / 2);
+          lv_obj_set_style_text_color(w.e, inside ? themeColor(p["value_color"] | "bg", s_theme.bg) : s_theme.fg, 0);
+        } else {
+          int x = constrain(fillW - sz.x / 2, 0, max(0, w.gw - (int)sz.x));
+          lv_obj_set_pos(w.e, w.gx + x, w.fy);
+        }
+      }
     } else {
       String key = keyOf(p);
-      String defText = "{" + key + "|pct}";
+      String defText = w.mode == 0 ? "{" + key + "|pct}" : String("");
       setText(w.a, w.cache[0], dsRender(p["text"].is<const char *>() ? (const char *)p["text"] : defText.c_str()));
       setText(w.b, w.cache[1], dsRender(p["caption"] | ""));
+      if (w.e) {
+        String defBadge = "{" + key + ":0}%";
+        String bt = dsRender(p["badge"].is<const char *>() ? (const char *)p["badge"] : defBadge.c_str());
+        if (!has) lv_obj_add_flag(w.e, LV_OBJ_FLAG_HIDDEN);
+        else if (bt != w.cache[3] || changed || force) {
+          w.cache[3] = bt;
+          lv_label_set_text(w.e, bt.c_str());
+          lv_obj_set_style_bg_color(w.e, valueColor(p, v, has), 0);
+          lv_obj_clear_flag(w.e, LV_OBJ_FLAG_HIDDEN);
+          lv_point_t sz;
+          lv_txt_get_size(&sz, bt.c_str(), fontFor(p["badge_size"] | 16), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+          int bw = sz.x + 16, bhh = sz.y + 4;
+          int start = p["start"] | 135, sweep = constrain((int)(p["sweep"] | 270), 10, 360);
+          float a = (start + sweep * frac) * 0.0174533f;
+          int x = w.gx + (int)lroundf(w.gw * cosf(a)) - bw / 2;
+          int y = w.gy + (int)lroundf(w.gw * sinf(a)) - bhh / 2;
+          lv_obj_set_pos(w.e, x, y);
+        }
+      }
     }
   } else if (w.type == "weather") {
     DsEntry e;

@@ -20,6 +20,8 @@ String inputLastEvent();
 uint32_t inputLastEventAgeMs();
 uint32_t inputIdleMs();
 void inputNoteActivity();
+void inputRotationHere();                               // current orientation = upright
+int inputOrientation();                                 // raw quarter-turn from the IMU (-1 unknown)
 void inputImuSnapshot(float &rollDeg, float &pitchDeg, float &angleDeg, float &dev);
 
 // Provided by main.cpp

@@ -194,6 +194,7 @@ static void handleCommands() {
         inputNoteActivity();
         if (c.payload == "revert_preview") { uiRevertPreview(); s_previewSince = 0; }
         else if (c.payload == "goto") { if (uiSleeping()) uiSetSleep(false); uiGoto(c.arg, c.arg > uiPageIndex() ? 1 : -1); }
+        else if (c.payload == "rotation_here") { inputRotationHere(); webApplySettings(); }
         else if (c.payload == "identify") { uiSetSleep(false); uiToast("Hello from the web UI", 3000); }
         else if (c.payload == "night_on") { s_nightOverride = true; uiSetNight(true); }
         else if (c.payload == "night_off") { s_nightOverride = true; uiSetNight(false); }

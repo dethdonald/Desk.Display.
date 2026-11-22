@@ -95,6 +95,7 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &err, size_
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!(https ? http.begin(secure, url) : http.begin(plain, url))) { err = "bad URL"; return false; }
   http.addHeader("Accept", "application/json");
+  http.useHTTP10(true);      // no chunked transfer encoding: getStream() must be plain JSON for the parser
   int code = http.GET();
   if (code != 200) { err = "HTTP " + String(code); http.end(); return false; }
   int len = http.getSize();
@@ -112,7 +113,7 @@ static void fetchWeather(const FetchCfg &cfg) {
   bool imperial = cfg.units != "metric";
   char url[512];
   snprintf(url, sizeof url,
-           "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+           "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day,precipitation"
            "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
            "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max"

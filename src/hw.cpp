@@ -176,6 +176,7 @@ bool hwInit() {
   s_dispDrv.flush_cb = flushCb;
   s_dispDrv.rounder_cb = rounderCb;
   s_dispDrv.draw_buf = &s_drawBuf;
+  s_dispDrv.sw_rotate = 1;                         // LVGL rotates the image (and touch) for auto-rotation
   lv_disp_drv_register(&s_dispDrv);
 
   lv_indev_drv_init(&s_indevDrv);
@@ -184,6 +185,18 @@ bool hwInit() {
   s_indev = lv_indev_drv_register(&s_indevDrv);
   LOGI("hw: LVGL ready");
   return true;
+}
+
+void hwSetRotation(int quarterTurns) {
+  lv_disp_t *d = lv_disp_get_default();
+  if (!d) return;
+  lv_disp_rot_t r = (lv_disp_rot_t)(((quarterTurns % 4) + 4) % 4);
+  if (lv_disp_get_rotation(d) != r) lv_disp_set_rotation(d, r);
+}
+
+int hwRotation() {
+  lv_disp_t *d = lv_disp_get_default();
+  return d ? (int)lv_disp_get_rotation(d) : 0;
 }
 
 void hwSetBrightness(uint8_t level) { s_gfx->setBrightness(level); }

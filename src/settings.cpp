@@ -16,6 +16,7 @@ static const char DEFAULTS[] = R"JSON({
   "display": {
     "brightness": 180,
     "pixel_shift": true,
+    "rotation": {"mode": "auto", "offset": 0, "reverse": false},
     "sleep_after_min": 0,
     "night": {"enabled": true, "start": "22:30", "end": "07:00", "brightness": 25, "use_night_theme": true, "screen_off": false}
   },

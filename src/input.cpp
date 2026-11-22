@@ -41,6 +41,22 @@ static uint32_t s_stillSince = 0;
 static uint32_t s_shakeWindow = 0; static int s_shakePeaks = 0; static bool s_shakeAbove = false;
 static uint32_t s_lastImu = 0;
 
+// screen rotation
+static String s_rotMode = "auto"; static int s_rotOffset = 0; static bool s_rotReverse = false;
+static int s_rotQ = -1, s_rotCand = -1; static uint32_t s_rotCandMs = 0;
+
+static void applyRotation() {
+  int rot;
+  if (s_rotMode == "auto") {
+    if (s_rotQ < 0) return;
+    rot = (s_rotReverse ? -s_rotQ : s_rotQ) + s_rotOffset;
+  } else {
+    rot = s_rotMode.toInt() / 90;
+  }
+  rot = ((rot % 4) + 4) % 4;
+  if (rot != hwRotation()) { hwSetRotation(rot); LOGI("display: rotation %d", rot * 90); }
+}
+
 // paging
 static int s_lastPage = -1; static uint32_t s_pageSince = 0;
 
@@ -67,6 +83,10 @@ void inputApplySettings() {
   c.autoDefault = k["auto_rotate"]["default_s"] | 15;
   c.idleHome = (uint32_t)(k["idle_home_s"] | 120) * 1000;
   c.sleepAfter = (uint32_t)(S("display")["sleep_after_min"] | 0) * 60000;
+  s_rotMode = (const char *)(S("display")["rotation"]["mode"] | "auto");
+  s_rotOffset = S("display")["rotation"]["offset"] | 0;
+  s_rotReverse = S("display")["rotation"]["reverse"] | false;
+  applyRotation();
 
   s_map.clear();
   for (JsonPair kv : k["bindings"].as<JsonObject>())
@@ -178,6 +198,20 @@ void inputCalibrate() {
   uiToast("Resting angle saved");
 }
 
+void inputRotationHere() {
+  if (s_rotQ < 0) { uiToast("Hold it upright for a moment, then try again"); return; }
+  int off = (((s_rotReverse ? s_rotQ : -s_rotQ) % 4) + 4) % 4;
+  gSettings["display"]["rotation"]["offset"] = off;
+  gSettings["display"]["rotation"]["mode"] = "auto";
+  settingsSave();
+  s_rotOffset = off; s_rotMode = "auto";
+  applyRotation();
+  LOGI("display: 'this way up' saved (offset %d)", off);
+  uiToast("Saved: this way is up");
+}
+
+int inputOrientation() { return s_rotQ; }
+
 void inputImuSnapshot(float &roll, float &pitch, float &angle, float &dev) {
   roll = s_roll; pitch = s_pitch; angle = s_angle; dev = s_dev;
 }
@@ -202,6 +236,16 @@ static void imuTick(uint32_t now) {
   s_pitch = wrap180((atan2f(g[1], g[2]) - atan2f(r[1], r[2])) * R2D) * (c.invFB ? -1 : 1);
   float dot = constrain(g[0] * r[0] + g[1] * r[1] + g[2] * r[2], -1.f, 1.f);
   s_angle = acosf(dot) * R2D;
+
+  // orientation for auto-rotate: gravity direction within the screen plane, only while roughly upright
+  if (fabsf(g[2]) < 0.8f) {
+    float a = atan2f(g[0], g[1]) * R2D;
+    int q = (((int)lroundf(a / 90.f)) % 4 + 4) % 4;
+    if (fabsf(wrap180(a - q * 90.f)) < 30.f) {
+      if (q != s_rotCand) { s_rotCand = q; s_rotCandMs = now; }
+      else if (q != s_rotQ && now - s_rotCandMs > 700) { s_rotQ = q; applyRotation(); }
+    }
+  }
 
   // flip (face down relative to rest)
   if (s_angle > 135) {

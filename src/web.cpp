@@ -290,7 +290,7 @@ void webTick() {
   bt["present"] = b.present; bt["charging"] = b.charging; bt["usb"] = b.usb; bt["percent"] = b.percent; bt["mv"] = b.mv;
   JsonObject u = d["ui"].to<JsonObject>();
   u["page"] = uiPageIndex(); u["pages"] = uiPageCount(); u["page_name"] = uiPageName(uiPageIndex());
-  u["sleeping"] = uiSleeping(); u["night"] = uiNight();
+  u["sleeping"] = uiSleeping(); u["night"] = uiNight(); u["rotation"] = hwRotation() * 90; u["orientation"] = inputOrientation();
   JsonObject in = d["input"].to<JsonObject>();
   in["last"] = inputLastEvent(); in["age_ms"] = inputLastEventAgeMs(); in["idle_ms"] = inputIdleMs();
   float roll, pitch, ang, dev; inputImuSnapshot(roll, pitch, ang, dev);

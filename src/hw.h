@@ -18,6 +18,8 @@ void hwBootMessage(const char *line1, const char *line2 = nullptr);
 void hwBootText(const char *title, const char *body);   // multi-line diagnostics screen
 bool hwInit();                         // PMU + RTC + LVGL (calls hwEarlyInit if needed)
 void hwSetBrightness(uint8_t level);   // 0..255
+void hwSetRotation(int quarterTurns);  // 0..3, software rotation of display + touch
+int hwRotation();
 void hwDisplayPower(bool on);
 void hwSetTouchOrientation(bool swapXY, bool mirrorX, bool mirrorY);
 lv_indev_t *hwTouchIndev();

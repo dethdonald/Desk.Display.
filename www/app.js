@@ -176,12 +176,35 @@ function renderWidget(p, theme, data) {
     const v = numOf(p.key || "", data), has = v !== undefined;
     const mn = p.min ?? 0, mx = p.max ?? 100;
     const frac = has && mx > mn ? Math.min(1, Math.max(0, (v - mn) / (mx - mn))) : 0;
-    box.style.flexDirection = "column"; box.style.alignItems = "flex-start"; box.style.gap = "6px";
-    const row = h("div", { style: { display: "flex", justifyContent: "space-between", width: "100%" } },
-      lbl(renderTmpl(p.label || "", data), size, fg), lbl(p.show_value === false ? "" : has ? fmtNum(v, 0) + (p.unit ?? "%") : "--", size, fg));
-    const bar = h("div", { style: { width: "100%", height: (p.bar_h ?? 14) + "px", borderRadius: "99px", background: tcol(p.track || "track", theme, theme.track), overflow: "hidden" } },
-      h("div", { style: { width: frac * 100 + "%", height: "100%", borderRadius: "99px", background: valueColor(p, v, has, theme) } }));
-    box.append(row, bar, lbl(has ? renderTmpl(p.sub || "", data) : (p.empty ?? "No data yet"), p.sub_size ?? 16, theme.muted));
+    const mode = p.value_pos || "right", vsz = p.value_size ?? size, bh = p.bar_h ?? 14;
+    const vt = p.show_value === false ? "" : has ? fmtNum(v, 0) + (p.unit ?? "%") : "--";
+    const col = valueColor(p, v, has, theme);
+    const fgL = tcol(p.label_color || "fg", theme, theme.fg);   // text stays neutral; "color" is the bar fill
+    box.style.flexDirection = "column"; box.style.alignItems = "stretch"; box.style.justifyContent = "center";
+    const hasLabel = !!(p.label) || mode === "right";
+    if (hasLabel) box.append(h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "6px" } },
+      lbl(renderTmpl(p.label || "", data), size, fgL), mode === "right" ? lbl(vt, vsz, fgL) : null));
+    const cw = W - 2 * pad;
+    const fillW = Math.round(frac * cw);
+    if (mode === "follow") {
+      const row = h("div", { style: { position: "relative", height: Math.round(nearestFont(vsz) * 1.22) + 2 + "px" } });
+      const l = lbl(vt, vsz, fgL, { position: "absolute", top: 0, whiteSpace: "pre" });
+      row.append(l); box.append(row);
+      requestAnimationFrame(() => { const lw = l.offsetWidth; l.style.left = Math.max(0, Math.min(cw - lw, fillW - lw / 2)) + "px"; });
+    }
+    const bar = h("div", { style: { position: "relative", width: "100%", height: bh + "px", borderRadius: "99px", background: tcol(p.track || "track", theme, theme.track), overflow: "hidden", flex: "none" } },
+      h("div", { style: { width: frac * 100 + "%", height: "100%", borderRadius: "99px", background: col } }));
+    if (mode === "inside") {
+      const l = lbl(vt, vsz, fgL, { position: "absolute", top: "50%", transform: "translateY(-50%)", whiteSpace: "pre" });
+      bar.append(l);
+      requestAnimationFrame(() => {
+        const lw = l.offsetWidth, padIn = Math.max(8, Math.floor(bh / 3)), inside = fillW >= lw + 2 * padIn;
+        let x = inside ? fillW - lw - padIn : fillW + padIn; if (x + lw > cw) x = cw - lw - padIn;
+        l.style.left = x + "px"; l.style.color = inside ? tcol(p.value_color || "bg", theme, theme.bg) : theme.fg;
+      });
+    }
+    box.append(bar);
+    if (p.sub) box.append(lbl(has ? renderTmpl(p.sub || "", data) : (p.empty ?? "No data yet"), p.sub_size ?? 16, theme.muted, { marginTop: "6px" }));
   } else if (t === "ring") {
     const v = numOf(p.key || "", data), has = v !== undefined;
     const mn = p.min ?? 0, mx = p.max ?? 100;
@@ -194,10 +217,18 @@ function renderWidget(p, theme, data) {
       ${frac > 0 ? `<path d="${arcPath(side / 2, side / 2, r, start, start + sweep * frac)}" fill="none" stroke="${valueColor(p, v, has, theme)}" stroke-width="${th}" stroke-linecap="${cap}"/>` : ""}</svg>`;
     box.innerHTML = svg;
     const capSize = p.caption_size ?? 16;
-    const textT = p.text !== undefined ? p.text : `{${p.key}|pct}`;
+    const mode = p.value_pos || "center";
+    const textT = p.text !== undefined ? p.text : mode === "center" ? `{${p.key}|pct}` : "";
     const center = h("div", { style: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" } },
       lbl(renderTmpl(textT, data), size, fg), p.caption ? lbl(renderTmpl(p.caption, data), capSize, theme.muted) : null);
     box.append(center);
+    if (mode === "tip" && has) {
+      const a = (start + sweep * frac) * Math.PI / 180;
+      const bx = W / 2 + r * Math.cos(a), by = H / 2 + r * Math.sin(a);
+      const badge = lbl(renderTmpl(p.badge ?? `{${p.key}:0}%`, data), p.badge_size ?? 16, theme.bg,
+        { position: "absolute", left: bx + "px", top: by + "px", transform: "translate(-50%,-50%)", background: valueColor(p, v, has, theme), borderRadius: "99px", padding: "2px 8px", whiteSpace: "pre" });
+      box.append(badge);
+    }
   } else if (t === "weather") {
     const row = (p.style || "row") === "row";
     box.style.flexDirection = row ? "row" : "column"; box.style.gap = "14px";
@@ -386,8 +417,8 @@ const WIDGETS = {
   date:     { label: "Date", def: { w: 8, h: 1, size: 22, fmt: "%A, %b %e", color: "muted" } },
   text:     { label: "Text / template", def: { w: 8, h: 1, size: 22, text: "Hello {sys.name}", color: "fg", align: "center" } },
   value:    { label: "Big value", def: { w: 4, h: 3, size: 48, value: "{claude.five_hour.used_percentage:0}%", label: "Session", key: "claude.five_hour.used_percentage", color_mode: "threshold", warn: 60, bad: 85 } },
-  bar:      { label: "Progress bar", def: { w: 10, h: 3, key: "claude.five_hour.used_percentage", label: "Current session", sub: "Resets in {claude.five_hour.resets_at|in}", size: 22, bar_h: 16, color_mode: "threshold", warn: 60, bad: 85 } },
-  ring:     { label: "Ring gauge", def: { w: 6, h: 6, key: "claude.five_hour.used_percentage", thickness: 14, start: 135, sweep: 270, size: 40, caption: "Session", color_mode: "threshold", warn: 60, bad: 85 } },
+  bar:      { label: "Progress bar", def: { w: 10, h: 3, key: "claude.five_hour.used_percentage", label: "Current session", sub: "Resets in {claude.five_hour.resets_at|in}", size: 22, bar_h: 34, value_pos: "inside", value_size: 20, color_mode: "fixed", color: "#D97757", track: "#2A1A14" } },
+  ring:     { label: "Ring gauge", def: { w: 6, h: 6, key: "claude.five_hour.used_percentage", thickness: 14, start: 135, sweep: 270, size: 40, caption: "Session", color_mode: "fixed", color: "#D97757", track: "#2A1A14" } },
   weather:  { label: "Weather now", def: { w: 6, h: 2, icon_size: 48, size: 32, style: "row", show_desc: false } },
   forecast: { label: "Forecast", def: { w: 12, h: 3, mode: "daily", count: 5, icon_size: 32, size: 18 } },
   icon:     { label: "Icon", def: { w: 2, h: 2, glyph: "", size: 64, color: "fg" } },
@@ -413,9 +444,11 @@ function propSchema(t) {
     date: [["fmt", "Format", "datefmt"], size, color, align],
     text: [["text", "Text (templates allowed)", "tmpl"], size, color, align, ["overflow", "Overflow", ["wrap", "clip", "scroll"]]],
     value: [["value", "Value (template)", "tmpl1"], ["label", "Label (template)", "tmpl1"], ["key", "Threshold key", "key"], size, ["label_size", "Label size", "font"], color, align, ...thr],
-    bar: [["key", "Data key", "key"], ["label", "Label", "tmpl1"], ["sub", "Sub text (template)", "tmpl1"], ["empty", "Text when no data", "text"], ["min", "Min", "num"], ["max", "Max", "num"], ["unit", "Unit", "text"],
+    bar: [["key", "Data key", "key"], ["value_pos", "Value position", [["inside", "On the bar (moves with fill)"], ["follow", "Above the bar (moves with fill)"], ["right", "Right of label"]]],
+      ["value_size", "Value size", "font"], ["value_color", "Value color on fill", "color"], ["label_color", "Text color", "color"], ["label", "Label", "tmpl1"], ["sub", "Sub text (template)", "tmpl1"], ["empty", "Text when no data", "text"], ["min", "Min", "num"], ["max", "Max", "num"], ["unit", "Unit", "text"],
       size, ["sub_size", "Sub text size", "font"], ["bar_h", "Bar height px", "num"], ["show_value", "Show value", "bool"], ...thr, color, ["track", "Track color", "color"]],
-    ring: [["key", "Data key", "key"], ["text", "Center text (template)", "tmpl1"], ["caption", "Caption (template)", "tmpl1"], ["min", "Min", "num"], ["max", "Max", "num"],
+    ring: [["key", "Data key", "key"], ["value_pos", "Value", [["center", "Center text"], ["tip", "Badge at arc tip (moves)"], ["none", "Hidden"]]],
+      ["badge", "Badge text (template)", "tmpl1"], ["badge_size", "Badge size", "font"], ["text", "Center text (template)", "tmpl1"], ["caption", "Caption (template)", "tmpl1"], ["min", "Min", "num"], ["max", "Max", "num"],
       ["start", "Start angle°", "num"], ["sweep", "Sweep°", "num"], ["thickness", "Thickness px", "num"], ["rounded", "Rounded ends", "bool"], size, ["caption_size", "Caption size", "font"], ...thr, color, ["track", "Track color", "color"]],
     weather: [["icon_size", "Icon size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], size, ["style", "Arrangement", [["row", "Side by side"], ["stack", "Stacked"]]], ["show_desc", "Show conditions", "bool"], ["desc_size", "Conditions size", "font"], ["show_unit", "Show °F/°C letter", "bool"], color, ["icon_color", "Icon color", "color"]],
     forecast: [["mode", "Mode", [["daily", "Daily"], ["hourly", "Hourly"]]], ["count", "Columns", "num"], ["step", "Hours between (hourly)", "num"], ["icon_size", "Icon size", [[32, "Small"], [64, "Medium"]]], size, color],
@@ -679,9 +712,9 @@ async function applyTemplate(name) {
       { type: "date", x: 1, y: 7, w: 10, h: 1, size: 28, fmt: "%A, %b %e", color: "muted" },
       { type: "weather", x: 3, y: 9, w: 6, h: 2, icon_size: 48, size: 32 }] }, ...base.pages.slice(1)] }),
     usage: Object.assign(clone(base), { home: 0, pages: [{ name: "Usage", enabled: true, duration: 20, widgets: [
-      { type: "ring", x: 0, y: 0, w: 12, h: 12, key: "claude.five_hour.used_percentage", thickness: 22, start: 135, sweep: 270, size: 96, text: "{claude.five_hour.used_percentage:0}", caption: "", color_mode: "threshold", warn: 60, bad: 85 },
+      { type: "ring", x: 0, y: 0, w: 12, h: 12, key: "claude.five_hour.used_percentage", thickness: 22, start: 135, sweep: 270, size: 96, text: "{claude.five_hour.used_percentage:0}", caption: "", color_mode: "fixed", color: "#D97757", track: "#2A1A14" },
       { type: "text", x: 2, y: 7, w: 8, h: 1, size: 20, color: "muted", align: "center", text: "session · resets in {claude.five_hour.resets_at|in}" },
-      { type: "bar", x: 2, y: 9, w: 8, h: 2, key: "claude.seven_day.used_percentage", label: "Week", sub: "", size: 18, bar_h: 10, color_mode: "threshold", warn: 70, bad: 90 },
+      { type: "bar", x: 2, y: 8, w: 8, h: 2, key: "claude.seven_day.used_percentage", label: "", sub: "", size: 18, bar_h: 26, value_pos: "inside", value_size: 16, color_mode: "fixed", color: "#D97757", track: "#2A1A14" },
       { type: "clock", x: 3, y: 1, w: 6, h: 2, size: 40, ampm: true, color: "muted" }] }, ...base.pages.slice(1)] }),
     minimal: Object.assign(clone(base), { home: 0, pages: [{ name: "Minimal", enabled: true, duration: 20, widgets: [
       { type: "clock", x: 1, y: 4, w: 10, h: 3, size: 96, ampm: false },
@@ -879,6 +912,11 @@ TABS.settings = () => {
     sec("sec-display", "Display",
       field("Brightness", inp("range", get(s, "display.brightness", 180), v => { set(s, "display.brightness", v); clearTimeout(TABS.settings.bt); TABS.settings.bt = setTimeout(() => saveSettings({ display: { brightness: v } }, "Brightness set"), 350); }, { min: 5, max: 255 })),
       check("Pixel shift (burn-in protection)", get(s, "display.pixel_shift", true), v => set(s, "display.pixel_shift", v)),
+      h("h3", {}, "Rotation"),
+      field("Screen rotation", sel([["auto", "Auto: turn with the device"], ["0", "0°"], ["90", "90°"], ["180", "180°"], ["270", "270°"]], get(s, "display.rotation.mode", "auto"), v => set(s, "display.rotation.mode", v))),
+      h("div", { class: "row" }, h("button", { class: "btn sm", onclick: async () => { await act("rotation_here"); setTimeout(async () => { S.settings = await api("/api/settings"); }, 800); } }, "This way is up"),
+        h("span", { class: "small muted" }, "Hold the display the way you want it upright, then press.")),
+      check("Reverse auto-rotate direction", get(s, "display.rotation.reverse", false), v => set(s, "display.rotation.reverse", v)),
       h("h3", {}, "Night mode"),
       check("Enabled", get(s, "display.night.enabled", true), v => set(s, "display.night.enabled", v)),
       h("div", { class: "two" }, field("Starts", inp("time", get(s, "display.night.start", "22:30"), v => set(s, "display.night.start", v))), field("Ends", inp("time", get(s, "display.night.end", "07:00"), v => set(s, "display.night.end", v)))),
