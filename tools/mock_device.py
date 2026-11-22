@@ -148,6 +148,8 @@ class H(BaseHTTPRequestHandler):
                 STATE["sleep"] = not STATE["sleep"]
             elif a == "night_toggle":
                 STATE["night"] = not STATE["night"]
+        elif p == "/api/update/install-latest":
+            STATE["upd"] = "up to date (v1.3.0 is the newest release)"
         elif p == "/api/usage":
             rl = b.get("rate_limits", {})
             for w, v in rl.items():

@@ -1037,49 +1037,54 @@ TABS.update = () => {
     xhr.onerror = () => { msg.textContent = "Upload failed (connection lost)"; go.disabled = false; };
     xhr.open("POST", "/api/update"); xhr.send(fd);
   } }, "Upload & install");
-  const url = inp("url", localStorage.getItem("dd-update-url") || "", v => localStorage.setItem("dd-update-url", v), { placeholder: "http://casaos.local:8080/deskdisplay/firmware.bin" });
   el.replaceChildren(h("div", { class: "grid" },
     h("div", { class: "card stack" }, h("h2", {}, "Firmware"),
       h("table", { class: "kv" }, h("tr", {}, h("td", {}, "Installed"), h("td", {}, `v${st.version} · built ${st.build}`)), h("tr", {}, h("td", {}, "Running from"), h("td", {}, `${st.partition} (${st.ota_state === "pending_verify" ? "verifying — rolls back if it crashes in the first minute" : "verified"})`))),
       h("p", { class: "small muted" }, "The web UI is built into the firmware, so one file updates everything. Settings and layout are kept. A new version must run for a minute without crashing, otherwise the display automatically goes back to the previous one.")),
     ghCard(),
     h("div", { class: "card stack" }, h("h2", {}, "Upload a file"), file, go, prog, msg,
-      h("p", { class: "small muted" }, "Use ", h("code", {}, ".pio/build/amoled216/firmware.bin"), " from the project (not the merged/factory image).")),
-    h("div", { class: "card stack" }, h("h2", {}, "Install from a URL"), h("p", { class: "small muted" }, "The display downloads the .bin itself (e.g. from your home server or a GitHub release)."), url,
-      h("button", { class: "btn", onclick: async () => {
-        try { await api("/api/update/url", { body: { url: url.value } }); msg2.textContent = "Starting…";
-          for (let i = 0; i < 120; i++) { await sleep(1000); const r = await api("/api/update/status").catch(() => null); if (!r) { msg2.textContent = "Restarting…"; waitForReboot(msg2); return; } msg2.textContent = r.status; if (/^error|no update/.test(r.status)) return; }
-        } catch (e) { toast(e.message, true); }
-      } }, "Download & install"), h("div", { class: "muted small", id: "urlMsg" }))));
-  const msg2 = $("#urlMsg");
+      h("p", { class: "small muted" }, "Use ", h("code", {}, ".pio/build/amoled216/firmware.bin"), " from the project (not the merged/factory image)."))));
 };
+const normRepo = r => (r || "").trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/^github\.com\//, "").replace(/\.git$/, "").split("/").slice(0, 2).join("/");
 function ghCard() {
   const u = clone(get(S.settings, "update", {}));
   const info = h("div", { class: "stack" }, h("span", { class: "muted small" }, "Loading…"));
   const out = h("div", { class: "muted small" });
-  const draw = d => {
-    info.replaceChildren(
-      h("table", { class: "kv" },
-        h("tr", {}, h("td", {}, "Running"), h("td", {}, "v" + d.current)),
-        h("tr", {}, h("td", {}, "Latest release"), h("td", {}, d.latest ? "v" + d.latest : (d.check_error || "not checked yet"))),
-        h("tr", {}, h("td", {}, "Last checked"), h("td", {}, d.checked_at ? renderTmpl("{_t|ago}", { _t: d.checked_at }) : "never"))),
-      d.notes ? h("pre", {}, d.notes) : null,
-      d.available ? h("button", { class: "btn primary", onclick: async () => {
-        try { await api("/api/update/install-latest", { method: "POST" }); out.textContent = "Downloading v" + d.latest + "…";
-          for (let i = 0; i < 180; i++) { await sleep(1000); const r = await api("/api/update/status").catch(() => null); if (!r) { out.textContent = "Restarting…"; waitForReboot(out); return; } out.textContent = r.status; if (/^error/.test(r.status)) return; }
-        } catch (e) { toast(e.message, true); }
-      } }, "Install v" + d.latest) : h("span", { class: "small muted" }, d.latest ? "You're up to date." : ""));
-  };
+  const draw = d => info.replaceChildren(
+    h("table", { class: "kv" },
+      h("tr", {}, h("td", {}, "Running"), h("td", {}, "v" + d.current)),
+      h("tr", {}, h("td", {}, "Newest release"), h("td", {}, d.latest ? "v" + d.latest + (d.available ? "  (update available)" : "  (up to date)") : (d.check_error || "not checked yet"))),
+      h("tr", {}, h("td", {}, "Last checked"), h("td", {}, d.checked_at ? renderTmpl("{_t|ago}", { _t: d.checked_at }) : "never"))),
+    d.notes && d.available ? h("pre", {}, d.notes) : null);
   const refresh = async () => { try { draw(await api("/api/update/status")); } catch { } };
   refresh();
+  const repoIn = inp("text", u.repo, v => u.repo = v, { placeholder: "owner/repo or https://github.com/owner/repo" });
+  const installBtn = h("button", { class: "btn primary", onclick: async () => {
+    const repo = normRepo(repoIn.value);
+    if (!repo.includes("/")) return toast("Enter a repository like owner/repo", true);
+    installBtn.disabled = true;
+    try {
+      await api("/api/update/install-latest", { body: { repo } });
+      for (let i = 0; i < 240; i++) {
+        await sleep(1000);
+        const r = await api("/api/update/status").catch(() => null);
+        if (!r) { out.textContent = "Installed. Restarting…"; waitForReboot(out); return; }
+        out.textContent = r.status;
+        if (/^(error|up to date|no update)/.test(r.status)) { draw(r); break; }
+      }
+    } catch (e) { toast(e.message, true); }
+    installBtn.disabled = false;
+  } }, "Install latest release");
   return h("div", { class: "card stack" }, h("h2", {}, "Updates from GitHub"),
-    h("p", { class: "small muted" }, "The display checks your repo's latest GitHub Release (built automatically when you push a version tag)."),
-    field("Repository", inp("text", u.repo, v => u.repo = v.trim(), { placeholder: "owner/repo" })),
+    h("p", { class: "small muted" }, "Enter the repository and the display finds its newest release by itself. Releases are built automatically when you run the Release firmware workflow (or push a version tag)."),
+    field("Repository", repoIn),
+    h("div", { class: "row" }, installBtn,
+      h("button", { class: "btn", onclick: async () => { u.repo = normRepo(repoIn.value); repoIn.value = u.repo; await api("/api/settings", { body: { update: u } }); await api("/api/update/check", { method: "POST" }); info.replaceChildren(h("span", { class: "muted small" }, "Checking…")); for (let i = 0; i < 20; i++) { await sleep(1000); const d = await api("/api/update/status"); if (!d.checking) { draw(d); return; } } } }, "Check only")),
+    out, info,
+    h("h3", {}, "Automatic updates"),
     h("div", { class: "two" }, field("Check every (hours)", inp("number", u.check_hours ?? 24, v => u.check_hours = v, { min: 1 })),
       h("div", { style: { display: "flex", alignItems: "flex-end" } }, check("Install automatically", u.auto, v => u.auto = v))),
-    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => saveSettings({ update: u }) }, "Save"),
-      h("button", { class: "btn", onclick: async () => { await api("/api/update/check", { method: "POST" }); info.replaceChildren(h("span", { class: "muted small" }, "Checking…")); for (let i = 0; i < 20; i++) { await sleep(1000); const d = await api("/api/update/status"); if (!d.checking) { draw(d); return; } } } }, "Check now")),
-    info, out);
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { u.repo = normRepo(repoIn.value); repoIn.value = u.repo; saveSettings({ update: u }); } }, "Save")));
 }
 async function waitForReboot(msgEl) {
   await sleep(4000);

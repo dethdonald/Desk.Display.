@@ -230,18 +230,24 @@ void webStart() {
   // ... or pull one from a URL (GitHub release, your server, ...)
   jsonRoute("/api/update/url", [](AsyncWebServerRequest *r, JsonVariant &j) {
     String url = j["url"] | "";
-    if (!url.startsWith("http")) return fail(r, 400, "URL must start with http:// or https://");
-    fetcherUpdateFromUrl(url); ok(r);
+    url.trim();
+    if (url.endsWith(".bin")) {                         // a direct firmware link
+      if (!url.startsWith("http")) return fail(r, 400, "URL must start with http:// or https://");
+      fetcherUpdateFromUrl(url);
+    } else {                                            // a repository: grab its newest release
+      if (normalizeRepo(url).indexOf('/') < 0) return fail(r, 400, "enter a repository like owner/repo");
+      fetcherInstallLatest(url);
+    }
+    ok(r);
   });
   s_server.on(AsyncURIMatcher::exact("/api/update/status"), HTTP_GET, [](AsyncWebServerRequest *r) {
     JsonDocument d; fetcherUpdateInfo(d); String s; serializeJson(d, s); sendJson(r, 200, s);
   }).addMiddleware(&s_auth);
   s_server.on(AsyncURIMatcher::exact("/api/update/check"), HTTP_POST, [](AsyncWebServerRequest *r) { fetcherCheckUpdate(); ok(r); }).addMiddleware(&s_auth);
-  s_server.on(AsyncURIMatcher::exact("/api/update/install-latest"), HTTP_POST, [](AsyncWebServerRequest *r) {
-    JsonDocument d; fetcherUpdateInfo(d);
-    if (!(d["available"] | false)) return fail(r, 400, "no newer release found - check first");
-    fetcherUpdateFromUrl(d["latest_url"].as<String>()); ok(r);
-  }).addMiddleware(&s_auth);
+  // Install the newest GitHub release: optional {"repo": "owner/repo" or GitHub URL}, default = configured repo
+  jsonRoute("/api/update/install-latest", [](AsyncWebServerRequest *r, JsonVariant &j) {
+    fetcherInstallLatest(j["repo"] | ""); ok(r);
+  });
 
   // Captive portal + SPA fallback
   s_server.onNotFound([](AsyncWebServerRequest *r) {

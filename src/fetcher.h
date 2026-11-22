@@ -19,6 +19,8 @@ String fetcherTestResult(bool &done);
 void fetcherUpdateFromUrl(const String &url);
 String fetcherUpdateStatus();
 void fetcherCheckUpdate();                 // check GitHub releases now
+void fetcherInstallLatest(const String &repoOrUrl);   // check + install newest release ("" = configured repo)
+String normalizeRepo(String r);
 void fetcherUpdateInfo(JsonDocument &d);   // status + latest release info
 
 time_t parseIsoTime(const char *s);

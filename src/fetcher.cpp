@@ -31,6 +31,7 @@ static uint32_t s_wxNext = 0;
 static String s_testUrl, s_testResult; static volatile bool s_testPending = false, s_testDone = true;
 static String s_updUrl, s_updStatus = "idle"; static volatile bool s_updPending = false;
 static String s_latest, s_latestUrl, s_latestNotes; static uint32_t s_checkedAt = 0; static String s_checkErr;
+static volatile bool s_installLatest = false; static String s_installRepo;
 static volatile bool s_checkPending = false; static uint32_t s_nextCheck = 120000;   // first check 2 min after boot
 
 static SemaphoreHandle_t mtx() { if (!s_mtx) s_mtx = xSemaphoreCreateMutex(); return s_mtx; }
@@ -296,6 +297,19 @@ static void runUpdate() {
   }
 }
 
+// Accepts "owner/repo", "github.com/owner/repo", "https://github.com/owner/repo(.git)(/releases...)"
+String normalizeRepo(String r) {
+  r.trim();
+  for (const char *pre : {"https://", "http://", "www.", "github.com/"})
+    if (r.startsWith(pre)) r = r.substring(strlen(pre));
+  if (r.endsWith(".git")) r = r.substring(0, r.length() - 4);
+  int first = r.indexOf('/');
+  if (first < 0) return r;
+  int second = r.indexOf('/', first + 1);
+  if (second > 0) r = r.substring(0, second);     // drop /releases/... etc.
+  return r;
+}
+
 // "1.10.2" > "1.9.9"
 static int cmpVersion(const String &a, const String &b) {
   int ai[3] = {0, 0, 0}, bi[3] = {0, 0, 0};
@@ -337,6 +351,19 @@ static void task(void *) {
     { Lock l; cfg = s_cfg; }
     uint32_t now = millis();
 
+    if (s_installLatest) {
+      s_installLatest = false;
+      FetchCfg one = cfg;
+      { Lock l; if (s_installRepo.length()) one.updRepo = s_installRepo; }
+      one.updAuto = true;                       // install if the newest release is newer than what's running
+      checkForUpdate(one);
+      Lock l;
+      if (!s_updPending) {
+        s_updStatus = s_checkErr.length() ? "error: " + s_checkErr
+                    : s_latest.length() ? "up to date (v" + s_latest + " is the newest release)"
+                                        : String("error: no release found");
+      }
+    }
     if (s_updPending) { s_updPending = false; runUpdate(); }
     if (WiFi.isConnected() && (s_checkPending || (cfg.updRepo.length() && (int32_t)(now - s_nextCheck) >= 0))) {
       s_checkPending = false;
@@ -389,8 +416,7 @@ void fetcherApplySettings() {
   c.place = (const char *)(w["place"] | "");
   c.wxIntervalMin = max(5, (int)(w["interval_min"] | 15));
   c.claudeStaleMin = S("claude")["stale_after_min"] | 60;
-  c.updRepo = (const char *)(S("update")["repo"] | "");
-  c.updRepo.trim();
+  c.updRepo = normalizeRepo((const char *)(S("update")["repo"] | ""));
   c.updAuto = S("update")["auto"] | false;
   c.updHours = max(1, (int)(S("update")["check_hours"] | 24));
   for (JsonObject s : gSettings["sources"].as<JsonArray>()) {
@@ -421,6 +447,12 @@ String fetcherTestResult(bool &done) { Lock l; done = s_testDone; return s_testR
 void fetcherUpdateFromUrl(const String &url) { Lock l; s_updUrl = url; s_updStatus = "queued"; s_updPending = true; }
 String fetcherUpdateStatus() { Lock l; return s_updStatus; }
 void fetcherCheckUpdate() { s_checkPending = true; }
+void fetcherInstallLatest(const String &repoOrUrl) {
+  Lock l;
+  s_installRepo = normalizeRepo(repoOrUrl);
+  s_updStatus = "checking for the newest release";
+  s_installLatest = true;
+}
 void fetcherUpdateInfo(JsonDocument &d) {
   Lock l;
   d["status"] = s_updStatus;
