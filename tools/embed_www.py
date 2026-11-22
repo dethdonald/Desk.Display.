@@ -1,6 +1,6 @@
 # PlatformIO pre-build script: gzip everything in www/ into src/www_assets.h
 # so the web UI ships inside the firmware image (one OTA update = firmware + UI).
-import gzip, os
+import gzip, hashlib, os
 
 try:
     Import("env")  # noqa: F821  (provided by PlatformIO)
@@ -29,9 +29,20 @@ def build():
              "struct WwwAsset { const char *path; const char *mime; const uint8_t *data; size_t len; };", ""]
     entries = []
     total = 0
+    # cache-busting: index.html references each asset as /name?v=<content hash>
+    hashes = {}
+    for rel, full in files:
+        with open(full, "rb") as f:
+            hashes[rel] = hashlib.sha1(f.read()).hexdigest()[:10]
     for i, (rel, full) in enumerate(files):
         with open(full, "rb") as f:
             raw = f.read()
+        if rel == "/index.html":
+            html = raw.decode()
+            for other, hsh in hashes.items():
+                if other != "/index.html":
+                    html = html.replace('"%s"' % other, '"%s?v=%s"' % (other, hsh))
+            raw = html.encode()
         gz = gzip.compress(raw, 9, mtime=0)
         total += len(gz)
         name = "WWW_%d" % i

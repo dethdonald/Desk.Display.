@@ -20,6 +20,7 @@ static I2SClass s_i2s;
 static es8311_handle_t s_codec = nullptr;
 static QueueHandle_t s_q = nullptr;
 static bool s_ok = false;
+static const char *s_status = "not started";
 static volatile bool s_enabled = true, s_onPage = true, s_onRotate = true, s_quietNight = true;
 static volatile int s_volume = 60;
 
@@ -68,18 +69,20 @@ void soundInit() {
   s_i2s.setPins(I2S_BCK_IO, I2S_WS_IO, I2S_DO_IO, I2S_DI_IO, I2S_MCK_IO);
   if (!s_i2s.begin(I2S_MODE_STD, RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO, I2S_STD_SLOT_BOTH)) {
     LOGI("sound: I2S init failed");
+    s_status = "I2S audio bus failed to start";
     return;
   }
   s_codec = es8311_create(0, ES8311_ADDRESS_0);
-  if (!s_codec) { LOGI("sound: codec not found"); return; }
+  if (!s_codec) { LOGI("sound: codec not found"); s_status = "audio chip (ES8311) not found"; return; }
   const es8311_clock_config_t clk = {.mclk_inverted = false, .sclk_inverted = false, .mclk_from_mclk_pin = true,
                                      .mclk_frequency = RATE * 256, .sample_frequency = RATE};
-  if (es8311_init(s_codec, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) { LOGI("sound: codec init failed"); return; }
+  if (es8311_init(s_codec, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) { LOGI("sound: codec init failed"); s_status = "audio chip (ES8311) did not respond"; return; }
   es8311_sample_frequency_config(s_codec, clk.mclk_frequency, clk.sample_frequency);
   es8311_microphone_config(s_codec, false);
   s_q = xQueueCreate(4, sizeof(SoundKind));
   xTaskCreatePinnedToCore(task, "sound", 4096, nullptr, 2, nullptr, 0);
   s_ok = true;
+  s_status = "ready";
   soundApplySettings();
   LOGI("sound: ready");
 }
@@ -94,6 +97,8 @@ void soundApplySettings() {
   if (s_ok) es8311_voice_volume_set(s_codec, s_volume, nullptr);
 }
 
+const char *soundStatus() { return s_status; }
+
 void soundPlay(SoundKind kind) {
   if (!s_ok || !s_q) return;
   if (kind != SND_TEST) {
@@ -103,5 +108,6 @@ void soundPlay(SoundKind kind) {
     if (s_quietNight && uiNight()) return;
     if (uiSleeping()) return;
   }
+  LOGI("sound: play %d", (int)kind);
   xQueueSend(s_q, &kind, 0);
 }

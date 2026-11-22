@@ -7,4 +7,5 @@ enum SoundKind : uint8_t { SND_PAGE, SND_ROTATE, SND_TEST };
 
 void soundInit();
 void soundApplySettings();      // main loop: volume / enabled flags
-void soundPlay(SoundKind kind); // honours settings (enabled, per-event switches, quiet at night)
+void soundPlay(SoundKind kind);
+const char *soundStatus();      // "ready" or what failed // honours settings (enabled, per-event switches, quiet at night)

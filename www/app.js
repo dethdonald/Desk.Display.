@@ -930,6 +930,7 @@ TABS.settings = () => {
       check("Turn the screen off at night (touch to wake)", get(s, "display.night.screen_off", false), v => set(s, "display.night.screen_off", v)),
       saveBtn("Save display", () => saveSettings({ display: s.display }))),
     sec("sec-sound", "Sound",
+      h("div", { class: "small" }, "Audio chip: ", h("b", { style: { color: S.status.sound === "ready" ? "var(--ok)" : "var(--warn)" } }, S.status.sound || "unknown (update firmware)")),
       check("Sounds on", get(s, "sound.enabled", true), v => set(s, "sound.enabled", v)),
       field("Volume", inp("range", get(s, "sound.volume", 60), v => set(s, "sound.volume", v), { min: 0, max: 100 })),
       check("Tick when the page changes", get(s, "sound.page_change", true), v => set(s, "sound.page_change", v)),

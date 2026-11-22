@@ -10,6 +10,7 @@
 #include "hw.h"
 #include "input.h"
 #include "www_assets.h"
+#include "sound.h"
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <Update.h>
@@ -72,9 +73,12 @@ static AsyncCallbackJsonWebHandler *jsonRoute(const char *uri, ArJsonRequestHand
 
 // ---------------------------------------------------------------- static assets
 static void serveAsset(AsyncWebServerRequest *r, const WwwAsset &a) {
+  if (r->hasHeader("If-None-Match") && r->header("If-None-Match") == "\"" FW_VERSION "\"") { r->send(304); return; }
   AsyncWebServerResponse *res = r->beginResponse(200, a.mime, a.data, a.len);
   res->addHeader("Content-Encoding", "gzip");
-  res->addHeader("Cache-Control", strcmp(a.path, "/index.html") == 0 ? "no-cache" : "public, max-age=86400");
+  // Always revalidate: the UI ships inside the firmware, so after an update the browser must not reuse old files.
+  res->addHeader("Cache-Control", "no-cache, must-revalidate");
+  res->addHeader("ETag", "\"" FW_VERSION "\"");
   r->send(res);
 }
 
@@ -307,6 +311,7 @@ void webTick() {
   d["partition"] = run ? run->label : "?";
   esp_ota_img_states_t st;
   if (run && esp_ota_get_state_partition(run, &st) == ESP_OK) d["ota_state"] = st == ESP_OTA_IMG_PENDING_VERIFY ? "pending_verify" : "valid";
+  d["sound"] = soundStatus();
   d["has_admin_pass"] = String((const char *)(S("admin")["pass"] | "")).length() > 0;
   d["api_token"] = S("api")["token"] | "";
   String s; serializeJson(d, s);
