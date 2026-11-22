@@ -825,7 +825,7 @@ const TZ = [["America/New_York", "EST5EDT,M3.2.0,M11.1.0"], ["America/Chicago", 
 const SCRIPT_URL = () => `https://raw.githubusercontent.com/${get(S.settings, "update.repo", "dethdonald/Desk.Display.")}/main/tools/deskdisplay-statusline.py`;
 function statusCmd(url, token) {
   return (TABS.settings.os || (navigator.userAgent.includes("Windows") ? "win" : "unix")) === "win"
-    ? `python C:/Users/YOU/.claude/deskdisplay-statusline.py --url ${url} --token ${token}`
+    ? `python C:/Users/${localStorage.getItem("dd-win-user") || "YOUR_NAME"}/.claude/deskdisplay-statusline.py --url ${url} --token ${token}`
     : `python3 ~/.claude/deskdisplay-statusline.py --url ${url} --token ${token}`;
 }
 TABS.settings = () => {
@@ -944,6 +944,9 @@ TABS.settings = () => {
         h("li", {}, "Download ", h("a", { href: SCRIPT_URL(), target: "_blank" }, "deskdisplay-statusline.py"), " (right-click → Save link as) into your ", h("code", {}, ".claude"), " folder: ", h("code", {}, "~/.claude/"), " on Mac/Linux, ", h("code", {}, "C:\\Users\\YOU\\.claude\\"), " on Windows."),
         h("li", {}, "Add the matching block to ", h("code", {}, ".claude/settings.json"), " (merge it in if the file already has settings), then restart Claude Code.")),
       h("div", { class: "row" }, sel([["unix", "Mac / Linux"], ["win", "Windows"]], TABS.settings.os || (navigator.userAgent.includes("Windows") ? "win" : "unix"), v => { TABS.settings.os = v; TABS.settings(); setTimeout(() => $("#sec-claude")?.scrollIntoView(), 30); })),
+      (TABS.settings.os || (navigator.userAgent.includes("Windows") ? "win" : "unix")) === "win"
+        ? field("Your Windows user name", inp("text", localStorage.getItem("dd-win-user") || "", v => localStorage.setItem("dd-win-user", v.trim()), { placeholder: "the folder name in C:\\Users\\", onchange: () => { TABS.settings(); setTimeout(() => $("#sec-claude")?.scrollIntoView(), 30); } }), "fills the paths below")
+        : null,
       h("pre", {}, JSON.stringify({ statusLine: { type: "command", command: statusCmd(pushUrl, token) } }, null, 2)),
       h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => navigator.clipboard?.writeText(JSON.stringify({ statusLine: { type: "command", command: statusCmd(pushUrl, token) } }, null, 2)).then(() => toast("Copied")) }, "Copy settings block"),
         h("button", { class: "btn sm", onclick: async () => { try { await api("/api/usage", { body: { rate_limits: { five_hour: { used_percentage: 42, resets_at: Math.floor(Date.now() / 1000) + 7200 }, seven_day: { used_percentage: 18, resets_at: Math.floor(Date.now() / 1000) + 4 * 86400 } }, source: "test" } }); toast("Sent sample data"); } catch (e) { toast(e.message, true); } } }, "Send test data")),

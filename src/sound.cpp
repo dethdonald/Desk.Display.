@@ -47,19 +47,17 @@ static void task(void *) {
   SoundKind k;
   for (;;) {
     if (xQueueReceive(s_q, &k, portMAX_DELAY) != pdTRUE || !buf) continue;
-    float amp = 0.35f;
+    float amp = 0.6f;
     size_t n = 0;
     if (k == SND_PAGE) n = synth(buf, maxFrames, 1500, 2100, 45, amp);
     else if (k == SND_ROTATE) {
       n = synth(buf, maxFrames, 900, 1200, 70, amp);
       n += synth(buf + 2 * n, maxFrames - n, 1350, 1800, 90, amp);
     } else n = synth(buf, maxFrames, 880, 1320, 160, amp);
-    digitalWrite(PA_EN, HIGH);
-    s_i2s.write((const uint8_t *)silence, 256 * 4);          // let the amplifier settle (avoids a pop)
-    s_i2s.write((const uint8_t *)buf, n * 4);
     s_i2s.write((const uint8_t *)silence, 256 * 4);
-    vTaskDelay(pdMS_TO_TICKS(30));
-    if (uxQueueMessagesWaiting(s_q) == 0) digitalWrite(PA_EN, LOW);
+    size_t wrote = s_i2s.write((const uint8_t *)buf, n * 4);
+    s_i2s.write((const uint8_t *)silence, 256 * 4);
+    if (wrote != n * 4) LOGI("sound: I2S wrote %u of %u bytes", (unsigned)wrote, (unsigned)(n * 4));
   }
 }
 
@@ -90,11 +88,14 @@ void soundInit() {
 void soundApplySettings() {
   JsonObject s = S("sound");
   s_enabled = s["enabled"] | true;
-  s_volume = constrain((int)(s["volume"] | 60), 0, 100);
+  s_volume = constrain((int)(s["volume"] | 80), 0, 100);
   s_onPage = s["page_change"] | true;
   s_onRotate = s["rotation"] | true;
   s_quietNight = s["quiet_at_night"] | true;
-  if (s_ok) es8311_voice_volume_set(s_codec, s_volume, nullptr);
+  if (s_ok) {
+    es8311_voice_volume_set(s_codec, s_volume, nullptr);
+    digitalWrite(PA_EN, s_enabled ? HIGH : LOW);     // amplifier stays on while sounds are enabled (as Waveshare's example)
+  }
 }
 
 const char *soundStatus() { return s_status; }

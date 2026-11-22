@@ -47,7 +47,7 @@ static const char DEFAULTS[] = R"JSON({
     "page_dots": "on_change"
   },
   "sources": [],
-  "sound":   {"enabled": true, "volume": 60, "page_change": true, "rotation": true, "quiet_at_night": true},
+  "sound":   {"enabled": true, "volume": 80, "page_change": true, "rotation": true, "quiet_at_night": true},
   "update":  {"repo": "dethdonald/Desk.Display.", "auto": false, "check_hours": 24}
 })JSON";
 

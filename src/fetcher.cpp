@@ -97,13 +97,22 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &err, size_
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!(https ? http.begin(secure, url) : http.begin(plain, url))) { err = "bad URL"; return false; }
   http.addHeader("Accept", "application/json");
-  http.useHTTP10(true);      // no chunked transfer encoding: getStream() must be plain JSON for the parser
   int code = http.GET();
-  if (code != 200) { err = "HTTP " + String(code); http.end(); return false; }
+  if (code <= 0) { err = "HTTP " + String(code) + " (" + http.errorToString(code) + ")"; http.end(); return false; }
   int len = http.getSize();
   if (len > (int)maxLen) { err = "response too large"; http.end(); return false; }
-  DeserializationError e = deserializeJson(doc, http.getStream());
+  String body = http.getString();          // handles chunked transfer encoding
   http.end();
+  if (code != 200) {
+    // Include the server's explanation (Open-Meteo answers {"error":true,"reason":"..."})
+    JsonDocument e;
+    String reason;
+    if (!deserializeJson(e, body)) reason = (const char *)(e["reason"] | e["message"] | "");
+    if (reason.isEmpty()) reason = body.substring(0, 120);
+    err = "HTTP " + String(code) + (reason.length() ? ": " + reason : String(""));
+    return false;
+  }
+  DeserializationError e = deserializeJson(doc, body);
   if (e) { err = String("JSON: ") + e.c_str(); return false; }
   return true;
 }
