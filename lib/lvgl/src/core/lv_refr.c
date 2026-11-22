@@ -1194,6 +1194,10 @@ static void draw_buf_rotate(lv_area_t * area, lv_color_t * color_p)
         lv_coord_t area_h = lv_area_get_height(area);
         /*Determine the maximum number of rows that can be rotated at a time*/
         lv_coord_t max_row = LV_MIN((lv_coord_t)((LV_DISP_ROT_MAX_BUF / sizeof(lv_color_t)) / area_w), area_h);
+        /*Desk Display patch: keep every rotated chunk an even number of rows. Panels like the CO5300
+         *only accept windows that start on even rows/columns; an odd chunk shears the image.*/
+        max_row &= ~((lv_coord_t)1);
+        if(max_row < 2) max_row = 2;
         lv_coord_t init_y_off;
         init_y_off = area->y1;
         if(drv->rotated == LV_DISP_ROT_90) {
