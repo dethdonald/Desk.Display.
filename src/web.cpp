@@ -137,7 +137,7 @@ void webStart() {
     JsonDocument d; d["ok"] = true; d["keys"] = n; String s; serializeJson(d, s); sendJson(r, 200, s);
   }, false);
   jsonRoute("/api/usage", [](AsyncWebServerRequest *r, JsonVariant &j) {
-    if (!tokenOk(r)) return fail(r, 401, "bad token");
+    if (!tokenOk(r)) { LOGI("claude: push rejected (wrong API token) from %s", r->client()->remoteIP().toString().c_str()); return fail(r, 401, "bad token"); }
     String err;
     claudeIngest(j, err) ? ok(r) : fail(r, 400, err);
   }, false);

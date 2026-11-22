@@ -936,6 +936,13 @@ TABS.settings = () => {
       h("pre", {}, JSON.stringify({ statusLine: { type: "command", command: statusCmd(pushUrl, token) } }, null, 2)),
       h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => navigator.clipboard?.writeText(JSON.stringify({ statusLine: { type: "command", command: statusCmd(pushUrl, token) } }, null, 2)).then(() => toast("Copied")) }, "Copy settings block"),
         h("button", { class: "btn sm", onclick: async () => { try { await api("/api/usage", { body: { rate_limits: { five_hour: { used_percentage: 42, resets_at: Math.floor(Date.now() / 1000) + 7200 }, seven_day: { used_percentage: 18, resets_at: Math.floor(Date.now() / 1000) + 4 * 86400 } }, source: "test" } }); toast("Sent sample data"); } catch (e) { toast(e.message, true); } } }, "Send test data")),
+      h("div", { class: "small" }, S.data["claude.updated"] !== undefined
+        ? h("span", {}, "Last push received: ", h("b", {}, renderTmpl("{claude.updated|ago}")))
+        : h("span", { style: { color: "var(--warn)" } }, "No push received yet.")),
+      h("h3", {}, "Not syncing? Test from that computer"),
+      h("p", { class: "small muted" }, "Run this in a terminal (PowerShell on Windows). It sends sample numbers right away and prints exactly what went wrong if it fails."),
+      h("pre", {}, statusCmd(pushUrl, token) + " --test"),
+      h("p", { class: "small muted" }, "Background sends are logged to deskdisplay-statusline.log in your temp folder (type %TEMP% in Explorer's address bar on Windows)."),
       h("p", { class: "small muted" }, "Uses the display's IP address because some Windows setups don't resolve .local names. If your router gives the display a new IP, update the command (or reserve the IP in your router)."),
       field("Mark data stale after (min)", inp("number", get(s, "claude.stale_after_min", 60), v => set(s, "claude.stale_after_min", v), { min: 5 })),
       saveBtn("Save", () => saveSettings({ claude: s.claude }))),

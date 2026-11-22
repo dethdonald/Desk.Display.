@@ -49,7 +49,7 @@ static void applyRotation() {
   int rot;
   if (s_rotMode == "auto") {
     if (s_rotQ < 0) return;
-    rot = (s_rotReverse ? -s_rotQ : s_rotQ) + s_rotOffset;
+    rot = (s_rotReverse ? s_rotQ : -s_rotQ) + s_rotOffset;   // default direction verified on hardware
   } else {
     rot = s_rotMode.toInt() / 90;
   }
@@ -200,7 +200,7 @@ void inputCalibrate() {
 
 void inputRotationHere() {
   if (s_rotQ < 0) { uiToast("Hold it upright for a moment, then try again"); return; }
-  int off = (((s_rotReverse ? s_rotQ : -s_rotQ) % 4) + 4) % 4;
+  int off = (((s_rotReverse ? -s_rotQ : s_rotQ) % 4) + 4) % 4;
   gSettings["display"]["rotation"]["offset"] = off;
   gSettings["display"]["rotation"]["mode"] = "auto";
   settingsSave();

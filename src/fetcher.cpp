@@ -220,6 +220,10 @@ bool claudeIngest(JsonVariantConst body, String &err) {
   if (body["source"].is<const char *>()) dsSetStr("claude.source", body["source"].as<const char *>());
   dsSetNum("claude.updated", time(nullptr));
   dsSetNum("claude.stale", 0);
+  double h5 = -1, wk = -1;
+  dsGetNum("claude.five_hour.used_percentage", h5);
+  dsGetNum("claude.seven_day.used_percentage", wk);
+  LOGI("claude: usage received (5h %.0f%%, week %.0f%%)%s", h5, wk, rl.isNull() ? " - no rate_limits in this push" : "");
   return true;
 }
 
