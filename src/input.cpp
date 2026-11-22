@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "logbuf.h"
 #include "config.h"
+#include "sound.h"
 #include <map>
 #include <vector>
 
@@ -45,7 +46,7 @@ static uint32_t s_lastImu = 0;
 static String s_rotMode = "auto"; static int s_rotOffset = 0; static bool s_rotReverse = false;
 static int s_rotQ = -1, s_rotCand = -1; static uint32_t s_rotCandMs = 0;
 
-static void applyRotation() {
+static void applyRotation(bool fromImu = false) {
   int rot;
   if (s_rotMode == "auto") {
     if (s_rotQ < 0) return;
@@ -54,7 +55,11 @@ static void applyRotation() {
     rot = s_rotMode.toInt() / 90;
   }
   rot = ((rot % 4) + 4) % 4;
-  if (rot != hwRotation()) { hwSetRotation(rot); LOGI("display: rotation %d", rot * 90); }
+  if (rot != hwRotation()) {
+    hwSetRotation(rot);
+    LOGI("display: rotation %d", rot * 90);
+    if (fromImu) soundPlay(SND_ROTATE);
+  }
 }
 
 // paging
@@ -243,7 +248,7 @@ static void imuTick(uint32_t now) {
     int q = (((int)lroundf(a / 90.f)) % 4 + 4) % 4;
     if (fabsf(wrap180(a - q * 90.f)) < 30.f) {
       if (q != s_rotCand) { s_rotCand = q; s_rotCandMs = now; }
-      else if (q != s_rotQ && now - s_rotCandMs > 700) { s_rotQ = q; applyRotation(); }
+      else if (q != s_rotQ && now - s_rotCandMs > 700) { bool first = s_rotQ < 0; s_rotQ = q; applyRotation(!first); }
     }
   }
 

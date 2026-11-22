@@ -117,7 +117,7 @@ static void fetchWeather(const FetchCfg &cfg) {
            "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day,precipitation"
            "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
-           "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max"
+           "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max"
            "&timezone=auto&timeformat=unixtime&forecast_days=6&forecast_hours=24%s",
            cfg.lat, cfg.lon, imperial ? "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch" : "");
   JsonDocument doc;
@@ -137,6 +137,7 @@ static void fetchWeather(const FetchCfg &cfg) {
   dsSetStr("weather.icon", utf8(day ? w.day : w.night));
   dsSetStr("weather.desc", w.desc);
   dsSetStr("weather.unit", imperial ? "°F" : "°C");
+  dsSetStr("weather.wind_unit", imperial ? "mph" : "km/h");
   dsSetStr("weather.place", cfg.place.length() ? cfg.place : String("Weather"));
   dsSetStr("weather.error", "");
 
@@ -149,6 +150,7 @@ static void fetchWeather(const FetchCfg &cfg) {
     dsSetNum(b + ".lo", d["temperature_2m_min"][i] | 0.0);
     dsSetNum(b + ".code", dc);
     dsSetNum(b + ".pp", d["precipitation_probability_max"][i] | 0);
+    dsSetNum(b + ".wind", d["wind_speed_10m_max"][i] | 0.0);
     dsSetStr(b + ".icon", utf8(wmo(dc).day));
     dsSetStr(b + ".desc", wmo(dc).desc);
     if (i == 0) {

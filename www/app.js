@@ -245,8 +245,10 @@ function renderWidget(p, theme, data) {
       const b = hourly ? `weather.h${i * step}` : `weather.d${i}`;
       const l1 = hourly ? renderTmpl(`{${b}.t|hour}`, data) : i === 0 ? "Today" : renderTmpl(`{${b}.t|day}`, data);
       const l2 = hourly ? renderTmpl(`{${b}.temp:0}°`, data) : renderTmpl(`{${b}.hi:0}°/{${b}.lo:0}°`, data);
+      const l3 = !hourly && p.show_wind ? renderTmpl(`{${b}.wind:0} `, data) + (data["weather.wind_unit"] || "mph") : null;
       box.append(h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" } },
-        lbl(l1, size, theme.muted), h("div", { class: "wx", style: { fontSize: wxSize(p.icon_size ?? 32) + "px", color: theme.fg } }, data[b + ".icon"] || ""), lbl(l2, size, fg)));
+        lbl(l1, size, theme.muted), h("div", { class: "wx", style: { fontSize: wxSize(p.icon_size ?? 32) + "px", color: theme.fg } }, data[b + ".icon"] || ""), lbl(l2, size, fg),
+        l3 !== null ? lbl(l3, p.wind_size ?? 14, theme.muted) : null));
     }
   } else if (t === "icon") {
     const g = p.key ? (data[p.key] ?? "") : (p.glyph || "");
@@ -422,7 +424,7 @@ const WIDGETS = {
   bar:      { label: "Progress bar", def: { w: 10, h: 3, key: "claude.five_hour.used_percentage", label: "Current session", sub: "Resets in {claude.five_hour.resets_at|in}", size: 22, bar_h: 34, value_pos: "inside", value_size: 20, color_mode: "fixed", color: "#D97757", track: "#2A1A14" } },
   ring:     { label: "Ring gauge", def: { w: 6, h: 6, key: "claude.five_hour.used_percentage", thickness: 14, start: 135, sweep: 270, size: 40, caption: "Session", color_mode: "fixed", color: "#D97757", track: "#2A1A14" } },
   weather:  { label: "Weather now", def: { w: 6, h: 2, icon_size: 48, size: 32, style: "row", show_desc: false } },
-  forecast: { label: "Forecast", def: { w: 12, h: 3, mode: "daily", count: 5, icon_size: 32, size: 18 } },
+  forecast: { label: "Forecast", def: { w: 12, h: 4, mode: "daily", count: 5, icon_size: 32, size: 18, show_wind: true } },
   icon:     { label: "Icon", def: { w: 2, h: 2, glyph: "", size: 64, color: "fg" } },
   box:      { label: "Box / panel", def: { w: 6, h: 3, bg: "track", radius: 16 } },
   qr:       { label: "Settings QR", def: { w: 4, h: 4 } },
@@ -433,7 +435,7 @@ const KEY_HINTS = {
   "claude.seven_day.used_percentage": "Weekly usage %", "claude.seven_day.resets_at": "Weekly reset time",
   "claude.context_window.used_percentage": "Context window %", "claude.model.display_name": "Model", "claude.cost.total_cost_usd": "Session cost $",
   "claude.updated": "Last push time", "weather.temp": "Temperature", "weather.feels": "Feels like", "weather.desc": "Conditions", "weather.hi": "Today's high",
-  "weather.lo": "Today's low", "weather.humidity": "Humidity %", "weather.wind": "Wind", "weather.pp": "Rain chance %", "weather.sunrise": "Sunrise", "weather.sunset": "Sunset",
+  "weather.lo": "Today's low", "weather.humidity": "Humidity %", "weather.wind": "Wind", "weather.pp": "Rain chance %", "weather.wind_unit": "mph or km/h", "weather.d0.wind": "Today's max wind", "weather.sunrise": "Sunrise", "weather.sunset": "Sunset",
   "weather.icon": "Weather glyph", "weather.place": "Location name", "sys.ip": "IP address", "sys.url": "Settings URL", "sys.battery": "Battery %", "sys.battery_text": "Battery text",
   "sys.rssi": "Wi-Fi signal", "sys.uptime_text": "Uptime", "sys.name": "Device name", "sys.page_name": "Current page" };
 const DATE_PRESETS = [["%A, %b %e", "Friday, Nov 21"], ["%a %b %e", "Fri Nov 21"], ["%B %e, %Y", "November 21, 2026"], ["%m/%d", "11/21"], ["%A", "Friday"], ["%b %e", "Nov 21"]];
@@ -453,7 +455,7 @@ function propSchema(t) {
       ["badge", "Badge text (template)", "tmpl1"], ["badge_size", "Badge size", "font"], ["text", "Center text (template)", "tmpl1"], ["caption", "Caption (template)", "tmpl1"], ["min", "Min", "num"], ["max", "Max", "num"],
       ["start", "Start angle°", "num"], ["sweep", "Sweep°", "num"], ["thickness", "Thickness px", "num"], ["rounded", "Rounded ends", "bool"], size, ["caption_size", "Caption size", "font"], ...thr, color, ["track", "Track color", "color"]],
     weather: [["icon_size", "Icon size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], size, ["style", "Arrangement", [["row", "Side by side"], ["stack", "Stacked"]]], ["show_desc", "Show conditions", "bool"], ["desc_size", "Conditions size", "font"], ["show_unit", "Show °F/°C letter", "bool"], color, ["icon_color", "Icon color", "color"]],
-    forecast: [["mode", "Mode", [["daily", "Daily"], ["hourly", "Hourly"]]], ["count", "Columns", "num"], ["step", "Hours between (hourly)", "num"], ["icon_size", "Icon size", [[32, "Small"], [64, "Medium"]]], size, color],
+    forecast: [["mode", "Mode", [["daily", "Daily"], ["hourly", "Hourly"]]], ["count", "Columns", "num"], ["step", "Hours between (hourly)", "num"], ["icon_size", "Icon size", [[32, "Small"], [64, "Medium"]]], size, color, ["show_wind", "Show wind speed (daily)", "bool"], ["wind_size", "Wind text size", "font"]],
     icon: [["glyph", "Icon", "glyph"], ["key", "…or from data key", "key"], ["size", "Size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], color],
     box: [], qr: [],
   };
@@ -927,6 +929,14 @@ TABS.settings = () => {
       check("Use night theme colors", get(s, "display.night.use_night_theme", true), v => set(s, "display.night.use_night_theme", v)),
       check("Turn the screen off at night (touch to wake)", get(s, "display.night.screen_off", false), v => set(s, "display.night.screen_off", v)),
       saveBtn("Save display", () => saveSettings({ display: s.display }))),
+    sec("sec-sound", "Sound",
+      check("Sounds on", get(s, "sound.enabled", true), v => set(s, "sound.enabled", v)),
+      field("Volume", inp("range", get(s, "sound.volume", 60), v => set(s, "sound.volume", v), { min: 0, max: 100 })),
+      check("Tick when the page changes", get(s, "sound.page_change", true), v => set(s, "sound.page_change", v)),
+      check("Chirp when the screen rotates", get(s, "sound.rotation", true), v => set(s, "sound.rotation", v)),
+      check("Quiet during night mode", get(s, "sound.quiet_at_night", true), v => set(s, "sound.quiet_at_night", v)),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ sound: s.sound }) }, "Save sound"),
+        h("button", { class: "btn", onclick: async () => { await saveSettings({ sound: s.sound }, "Saved"); act("test_sound"); } }, "Save & test"))),
     sec("sec-claude", "Claude usage",
       h("p", { class: "muted small" }, "Claude Code's status line already receives your 5-hour and weekly plan limits. A tiny script forwards them here whenever Claude Code refreshes its status line, so the numbers update while you use Claude Code (usage from claude.ai shows up with your next Claude Code message)."),
       h("ol", { class: "small", style: { paddingLeft: "18px", margin: 0 } },

@@ -38,6 +38,8 @@ for i in range(6):
     DATA[f"weather.d{i}.hi"] = 50 + i
     DATA[f"weather.d{i}.lo"] = 38 + i
     DATA[f"weather.d{i}.icon"] = icons[i % len(icons)]
+    DATA[f"weather.d{i}.wind"] = 6 + 3 * i
+DATA["weather.wind_unit"] = "mph"
 for i in range(24):
     DATA[f"weather.h{i}.t"] = now + i * 3600
     DATA[f"weather.h{i}.temp"] = 45 + (i % 6)

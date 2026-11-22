@@ -16,6 +16,7 @@
 #include "net.h"
 #include "fetcher.h"
 #include "web.h"
+#include "sound.h"
 
 // Keep a freshly-installed firmware in "pending verify" until it has run healthily for a while.
 // If it crashes or reboots before that, the bootloader rolls back to the previous version.
@@ -164,6 +165,7 @@ static void applyAllSettings() {
   netApplySettings();
   fetcherApplySettings();
   inputApplySettings();
+  soundApplySettings();
   webApplySettings();
   s_nightSched = -1;                   // re-evaluate schedule
   uiApplySettings();
@@ -194,6 +196,7 @@ static void handleCommands() {
         inputNoteActivity();
         if (c.payload == "revert_preview") { uiRevertPreview(); s_previewSince = 0; }
         else if (c.payload == "goto") { if (uiSleeping()) uiSetSleep(false); uiGoto(c.arg, c.arg > uiPageIndex() ? 1 : -1); }
+        else if (c.payload == "test_sound") soundPlay(SND_TEST);
         else if (c.payload == "refresh_weather") { fetcherRefreshWeather(); uiToast("Updating weather"); }
         else if (c.payload == "rotation_here") { inputRotationHere(); webApplySettings(); }
         else if (c.payload == "identify") { uiSetSleep(false); uiToast("Hello from the web UI", 3000); }
@@ -278,6 +281,8 @@ void setup() {
   JsonObject t = S("touch");
   hwSetTouchOrientation(t["swap_xy"] | true, t["mirror_x"] | true, t["mirror_y"] | false);
 
+  bootStep("sound", false);
+  soundInit();
   bootStep("layout");
   uiInit();
   bootStep("input", false);

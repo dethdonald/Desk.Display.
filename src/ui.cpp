@@ -6,6 +6,7 @@
 #include "input.h"
 #include "hw.h"
 #include "logbuf.h"
+#include "sound.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <vector>
@@ -51,8 +52,8 @@ static const char DEFAULT_LAYOUT[] = R"JSON({
       {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 24, "color": "muted", "align": "center", "text": "{weather.place}"},
       {"type": "weather", "x": 1, "y": 2, "w": 10, "h": 4, "icon_size": 128, "size": 64, "style": "row", "show_desc": false},
       {"type": "text", "x": 1, "y": 6, "w": 10, "h": 1, "size": 22, "color": "fg", "align": "center",
-       "text": "{weather.desc}   H {weather.hi:0}°  L {weather.lo:0}°"},
-      {"type": "forecast", "x": 0, "y": 8, "w": 12, "h": 3, "mode": "daily", "count": 5, "icon_size": 32, "size": 18}
+       "text": "{weather.desc}   H {weather.hi:0}°  L {weather.lo:0}°   {weather.wind:0} {weather.wind_unit}"},
+      {"type": "forecast", "x": 0, "y": 7, "w": 12, "h": 4, "mode": "daily", "count": 5, "icon_size": 32, "size": 18, "show_wind": true}
     ]},
     {"name": "Info", "enabled": true, "duration": 10, "widgets": [
       {"type": "text", "x": 1, "y": 1, "w": 10, "h": 1, "size": 24, "color": "fg", "align": "center", "text": "{sys.name}"},
@@ -343,7 +344,9 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
       lv_obj_set_style_text_color(ic, s_theme.fg, 0);
       lv_label_set_text(ic, "");
       lv_obj_t *l2 = mkLabel(col, size, fg);
-      w.cols.push_back(l1); w.cols.push_back(ic); w.cols.push_back(l2);
+      lv_obj_t *l3 = mkLabel(col, p["wind_size"] | 14, s_theme.muted);     // wind (hidden unless enabled)
+      if (!(p["show_wind"] | false)) lv_obj_add_flag(l3, LV_OBJ_FLAG_HIDDEN);
+      w.cols.push_back(l1); w.cols.push_back(ic); w.cols.push_back(l2); w.cols.push_back(l3);
     }
   } else if (w.type == "icon") {
     int is = p["size"] | 64;
@@ -485,7 +488,8 @@ static void updateWidget(Widget &w, bool force) {
   } else if (w.type == "forecast") {
     bool hourly = strcmp(p["mode"] | "daily", "hourly") == 0;
     int step = hourly ? (int)(p["step"] | 2) : 1;
-    int n = w.cols.size() / 3;
+    int n = w.cols.size() / 4;
+    DsEntry wu; String windUnit = dsGet("weather.wind_unit", wu) ? wu.str : String("mph");
     std::vector<String> txt;
     String agg;
     for (int i = 0; i < n; i++) {
@@ -494,8 +498,9 @@ static void updateWidget(Widget &w, bool force) {
       DsEntry e; String ic = dsGet(base + ".icon", e) ? e.str : String("");
       String l2 = hourly ? dsRender(("{" + base + ".temp:0}°").c_str())
                          : dsRender(("{" + base + ".hi:0}°/{" + base + ".lo:0}°").c_str());
-      txt.push_back(l1); txt.push_back(ic); txt.push_back(l2);
-      agg += l1 + "\x1f" + ic + "\x1f" + l2 + "\x1e";
+      String l3 = hourly ? String("") : dsRender(("{" + base + ".wind:0} ").c_str()) + windUnit;
+      txt.push_back(l1); txt.push_back(ic); txt.push_back(l2); txt.push_back(l3);
+      agg += l1 + "\x1f" + ic + "\x1f" + l2 + "\x1f" + l3 + "\x1e";
     }
     if (agg != w.cache[0]) {
       w.cache[0] = agg;
@@ -714,6 +719,7 @@ void uiGoto(int index, int dir) {
   if (n == 0) return;
   index = ((index % n) + n) % n;
   if (index == s_cur && dir == 0) return;
+  if (index != s_cur) soundPlay(SND_PAGE);
   s_cur = index;
   for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
   const char *tr = S("controls")["transition"] | "slide";
