@@ -97,7 +97,7 @@ class H(BaseHTTPRequestHandler):
                 "ui": {"page": STATE["page"], "pages": len(enabled), "page_name": enabled[STATE["page"]]["name"], "sleeping": STATE["sleep"], "night": STATE["night"]},
                 "input": {"last": STATE["last"], "age_ms": int((time.time() - STATE["last_t"]) * 1000), "idle_ms": 5000, "roll": random.uniform(-3, 3),
                           "pitch": random.uniform(-3, 3), "angle": 2.1, "motion_g": 0.01, "imu": True},
-                "time": int(time.time()), "time_valid": True, "partition": "app0", "ota_state": "valid",
+                "time": int(time.time()), "time_valid": True, "display": {"fps": 31.5, "mbps": 13.2, "bus_busy_pct": 64}, "sound": "ready", "partition": "app0", "ota_state": "valid",
                 "has_admin_pass": bool(SETTINGS["admin"]["pass"]), "api_token": SETTINGS["api"]["token"]})
         if p == "/api/settings":
             return self.send(200, masked())

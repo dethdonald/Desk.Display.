@@ -771,7 +771,7 @@ function drawControls() {
         num("auto_rotate.default_s", "Default time per page (s)", { min: 3 }, "per-page times are set in Layout"),
         num("idle_home_s", "Return to home page after idle (s)", { min: 0 }, "0 = never"),
         field("Sleep screen after idle (min)", inp("number", get(S.settings, "display.sleep_after_min", 0), v => saveSettings({ display: { sleep_after_min: v || 0 } }), { min: 0 }), "0 = never"),
-        field("Page transition", sel([["slide", "Slide"], ["fade", "Fade"], ["none", "None"]], c.transition || "slide", v => c.transition = v)),
+        field("Page transition", sel([["slide", "Slide (eased)"], ["dim", "Dim (smoothest)"], ["fade", "Cross-fade"], ["none", "None"]], c.transition || "slide", v => c.transition = v)),
         num("transition_ms", "Transition time (ms)", { min: 0, max: 1000 }),
         field("Page dots", sel([["on_change", "Show briefly on change"], ["always", "Always"], ["never", "Never"]], c.page_dots || "on_change", v => c.page_dots = v))),
       h("div", { class: "card stack" }, h("h2", {}, "Touch tuning"),
@@ -922,6 +922,9 @@ TABS.settings = () => {
       h("div", { class: "row" }, h("button", { class: "btn sm", onclick: async () => { await act("rotation_here"); setTimeout(async () => { S.settings = await api("/api/settings"); }, 800); } }, "This way is up"),
         h("span", { class: "small muted" }, "Hold the display the way you want it upright, then press.")),
       check("Reverse auto-rotate direction", get(s, "display.rotation.reverse", false), v => set(s, "display.rotation.reverse", v)),
+      h("div", { class: "two" },
+        field("Turn effect", sel([["dip", "Fade out & in"], ["none", "Instant"]], get(s, "display.rotation.effect", "dip"), v => set(s, "display.rotation.effect", v))),
+        field("Effect time (ms)", inp("number", get(s, "display.rotation.effect_ms", 360), v => set(s, "display.rotation.effect_ms", v), { min: 100, max: 1500 }))),
       h("h3", {}, "Night mode"),
       check("Enabled", get(s, "display.night.enabled", true), v => set(s, "display.night.enabled", v)),
       h("div", { class: "two" }, field("Starts", inp("time", get(s, "display.night.start", "22:30"), v => set(s, "display.night.start", v))), field("Ends", inp("time", get(s, "display.night.end", "07:00"), v => set(s, "display.night.end", v)))),
@@ -983,6 +986,7 @@ TABS.maint = async () => {
   const rows = [["Firmware", `v${st.version} (${st.build})`], ["Running from", `${st.partition} · ${st.ota_state || ""}`], ["Uptime", fmtDur(st.uptime_s || 0)],
     ["Free memory", `${Math.round(st.heap / 1024)} KB (min ${Math.round(st.heap_min / 1024)} KB) · PSRAM ${Math.round(st.psram / 1024)} KB`],
     ["Network", n.ap ? "Setup network" : `${n.ssid} · ${n.rssi} dBm`], ["Address", `${n.ip} · ${n.host}.local`], ["MAC", n.mac],
+    ["Display", st.display ? `${(st.display.fps || 0).toFixed(1)} fps · ${(st.display.mbps || 0).toFixed(1)} MB/s · bus ${Math.round(st.display.bus_busy_pct || 0)}% busy` : "-"],
     ["Power", b.present ? `${b.percent}% · ${b.mv} mV${b.charging ? " · charging" : ""}` : "USB (no battery)"], ["Clock", st.time_valid ? new Date(st.time * 1000).toLocaleString() : "not set yet"]];
   const logPre = h("pre", { id: "logs" }, "Loading…");
   const dataBox = h("div", {});

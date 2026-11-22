@@ -6,7 +6,7 @@
 #include <driver/spi_master.h>
 
 #ifndef ESP32QSPI_MAX_PIXELS_AT_ONCE
-#define ESP32QSPI_MAX_PIXELS_AT_ONCE 1024
+#define ESP32QSPI_MAX_PIXELS_AT_ONCE 4096  // Desk Display: larger transfers (was 1024)
 #endif
 #ifndef ESP32QSPI_FREQUENCY
 #define ESP32QSPI_FREQUENCY 40000000

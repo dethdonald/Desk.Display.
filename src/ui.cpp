@@ -113,6 +113,8 @@ static lv_obj_t *s_overlay = nullptr;
 static lv_obj_t *s_toast = nullptr;
 static uint32_t s_toastHideAt = 0;
 static int s_lastSecond = -1;
+static bool s_dipping = false;      // brightness "dip" transition running
+static void transFinishNow();
 
 // ---------------------------------------------------------------- helpers
 static lv_color_t parseHex(const char *s, lv_color_t def) {
@@ -575,7 +577,9 @@ static bool buildFromDoc(JsonDocument *doc) {
     pages.push_back(std::move(pg));
   }
 
+  transFinishNow();
   lv_anim_del_all();
+  s_dipping = false;
   int keep = s_pages.empty() ? -1 : s_cur;
   std::vector<Page> old = std::move(s_pages);
   s_pages = std::move(pages);
@@ -714,23 +718,133 @@ void uiToast(const String &msg, uint32_t ms) {
 }
 
 // ---------------------------------------------------------------- navigation
+// ---------------------------------------------------------------- transitions
+// Slide: both pages are rendered once into images, then only the images move (cheap per frame).
+static lv_obj_t *s_tScr = nullptr;
+static lv_img_dsc_t *s_snapA = nullptr, *s_snapB = nullptr;
+static lv_obj_t *s_imgA = nullptr, *s_imgB = nullptr;
+static int s_tTarget = -1;
+
+static void transFinishNow() {
+  if (!s_tScr) return;
+  if (s_imgA) lv_anim_del(s_imgA, nullptr);
+  if (s_imgB) lv_anim_del(s_imgB, nullptr);
+  if (s_tTarget >= 0 && s_tTarget < (int)s_pages.size()) lv_scr_load(s_pages[s_tTarget].scr);
+  lv_obj_del(s_tScr);
+  s_tScr = s_imgA = s_imgB = nullptr;
+  if (s_snapA) { lv_snapshot_free(s_snapA); s_snapA = nullptr; }
+  if (s_snapB) { lv_snapshot_free(s_snapB); s_snapB = nullptr; }
+  s_tTarget = -1;
+}
+
+static void slideXCb(void *obj, int32_t v) { lv_obj_set_x((lv_obj_t *)obj, v); }
+static void slideReadyCb(lv_anim_t *) { transFinishNow(); }
+
+static bool slideTo(int target, int dir, int ms) {
+  lv_obj_t *from = lv_scr_act();
+  lv_obj_t *to = s_pages[target].scr;
+  lv_obj_update_layout(to);
+  s_snapA = lv_snapshot_take(from, LV_IMG_CF_TRUE_COLOR);
+  s_snapB = lv_snapshot_take(to, LV_IMG_CF_TRUE_COLOR);
+  if (!s_snapA || !s_snapB) {                       // out of memory: just switch
+    if (s_snapA) lv_snapshot_free(s_snapA);
+    if (s_snapB) lv_snapshot_free(s_snapB);
+    s_snapA = s_snapB = nullptr;
+    return false;
+  }
+  s_tTarget = target;
+  s_tScr = lv_obj_create(nullptr);
+  lv_obj_clear_flag(s_tScr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(s_tScr, s_theme.bg, 0);
+  s_imgA = lv_img_create(s_tScr); lv_img_set_src(s_imgA, s_snapA); lv_obj_set_pos(s_imgA, 0, 0);
+  s_imgB = lv_img_create(s_tScr); lv_img_set_src(s_imgB, s_snapB); lv_obj_set_pos(s_imgB, dir * LCD_W, 0);
+  lv_scr_load(s_tScr);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_exec_cb(&a, slideXCb);
+  lv_anim_set_time(&a, ms);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_set_var(&a, s_imgA); lv_anim_set_values(&a, 0, -dir * LCD_W); lv_anim_start(&a);
+  lv_anim_set_var(&a, s_imgB); lv_anim_set_values(&a, dir * LCD_W, 0);
+  lv_anim_set_ready_cb(&a, slideReadyCb);
+  lv_anim_start(&a);
+  return true;
+}
+
+// Dip: fade the panel's own brightness down, do something while dark, fade back up.
+// Costs no rendering at all, so it is perfectly smooth.
+enum DipAction : uint8_t { DIP_NONE, DIP_PAGE, DIP_ROTATE };
+static DipAction s_dipAction = DIP_NONE;
+static int s_dipArg = 0, s_dipMs = 300;
+static uint8_t currentBrightness();
+
+static void dipBrightCb(void *, int32_t v) { hwSetBrightness((uint8_t)v); }
+static void dipUpDone(lv_anim_t *) { s_dipping = false; uiApplyBrightness(); }
+static void dipDownDone(lv_anim_t *) {
+  if (s_dipAction == DIP_PAGE && s_dipArg >= 0 && s_dipArg < (int)s_pages.size()) lv_scr_load(s_pages[s_dipArg].scr);
+  if (s_dipAction == DIP_ROTATE) hwSetRotation(s_dipArg);
+  lv_refr_now(nullptr);                              // draw the new state completely while the screen is dark
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, &s_dipAction);
+  lv_anim_set_exec_cb(&a, dipBrightCb);
+  lv_anim_set_values(&a, 0, currentBrightness());
+  lv_anim_set_time(&a, s_dipMs / 2);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+  lv_anim_set_ready_cb(&a, dipUpDone);
+  lv_anim_start(&a);
+}
+
+static void dip(DipAction act, int arg, int ms) {
+  lv_anim_del(&s_dipAction, nullptr);
+  s_dipAction = act; s_dipArg = arg; s_dipMs = max(80, ms); s_dipping = true;
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, &s_dipAction);
+  lv_anim_set_exec_cb(&a, dipBrightCb);
+  lv_anim_set_values(&a, currentBrightness(), 0);
+  lv_anim_set_time(&a, s_dipMs / 2);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+  lv_anim_set_ready_cb(&a, dipDownDone);
+  lv_anim_start(&a);
+}
+
 void uiGoto(int index, int dir) {
   int n = s_pages.size();
   if (n == 0) return;
   index = ((index % n) + n) % n;
   if (index == s_cur && dir == 0) return;
+  transFinishNow();
   if (index != s_cur) soundPlay(SND_PAGE);
+  int from = s_cur;
   s_cur = index;
   for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
   const char *tr = S("controls")["transition"] | "slide";
-  int ms = S("controls")["transition_ms"] | 250;
-  lv_scr_load_anim_t anim = LV_SCR_LOAD_ANIM_NONE;
-  if (!strcmp(tr, "slide")) anim = dir < 0 ? LV_SCR_LOAD_ANIM_MOVE_RIGHT : LV_SCR_LOAD_ANIM_MOVE_LEFT;
-  else if (!strcmp(tr, "fade")) anim = LV_SCR_LOAD_ANIM_FADE_ON;
-  if (dir == 0 && anim != LV_SCR_LOAD_ANIM_FADE_ON) anim = LV_SCR_LOAD_ANIM_NONE;
-  lv_anim_del_all();
-  lv_scr_load_anim(s_pages[s_cur].scr, anim, anim == LV_SCR_LOAD_ANIM_NONE ? 0 : ms, 0, false);
+  int ms = S("controls")["transition_ms"] | 300;
+  if (dir == 0) dir = index > from ? 1 : -1;
+  bool animate = !s_sleep && ms > 0 && index != from;
+  if (animate && !strcmp(tr, "slide")) {
+    if (!slideTo(s_cur, dir, ms)) lv_scr_load(s_pages[s_cur].scr);
+  } else if (animate && !strcmp(tr, "dim")) {
+    dip(DIP_PAGE, s_cur, ms);
+  } else if (animate && !strcmp(tr, "fade")) {
+    lv_scr_load_anim(s_pages[s_cur].scr, LV_SCR_LOAD_ANIM_FADE_ON, ms, 0, false);
+  } else {
+    lv_scr_load(s_pages[s_cur].scr);
+  }
   updateDots();
+}
+
+void uiRotate(int quarterTurns, bool animate) {
+  quarterTurns = ((quarterTurns % 4) + 4) % 4;
+  if (quarterTurns == hwRotation()) return;
+  const char *fx = S("display")["rotation"]["effect"] | "dip";
+  if (animate && !s_sleep && !strcmp(fx, "dip")) {
+    transFinishNow();
+    dip(DIP_ROTATE, quarterTurns, S("display")["rotation"]["effect_ms"] | 360);
+  } else {
+    hwSetRotation(quarterTurns);
+  }
 }
 
 void uiNext() { uiGoto(s_cur + 1, 1); }
@@ -742,11 +856,15 @@ String uiPageName(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[
 uint16_t uiPageDuration(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].duration : 0; }
 
 // ---------------------------------------------------------------- display state
-void uiApplyBrightness() {
-  if (s_sleep) return;
+static uint8_t currentBrightness() {
   JsonObject d = S("display");
   int b = s_night ? (int)(d["night"]["brightness"] | 25) : (int)(d["brightness"] | 180);
-  hwSetBrightness(constrain(b, 1, 255));
+  return (uint8_t)constrain(b, 1, 255);
+}
+
+void uiApplyBrightness() {
+  if (s_sleep || s_dipping) return;
+  hwSetBrightness(currentBrightness());
 }
 
 void uiSetSleep(bool sleep) {

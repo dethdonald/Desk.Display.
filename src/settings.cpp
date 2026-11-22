@@ -16,7 +16,7 @@ static const char DEFAULTS[] = R"JSON({
   "display": {
     "brightness": 180,
     "pixel_shift": true,
-    "rotation": {"mode": "auto", "offset": 0, "reverse": false},
+    "rotation": {"mode": "auto", "offset": 0, "reverse": false, "effect": "dip", "effect_ms": 360},
     "sleep_after_min": 0,
     "night": {"enabled": true, "start": "22:30", "end": "07:00", "brightness": 25, "use_night_theme": true, "screen_off": false}
   },
@@ -43,7 +43,7 @@ static const char DEFAULTS[] = R"JSON({
     "auto_rotate": {"enabled": false, "default_s": 15},
     "idle_home_s": 120,
     "transition": "slide",
-    "transition_ms": 250,
+    "transition_ms": 300,
     "page_dots": "on_change"
   },
   "sources": [],

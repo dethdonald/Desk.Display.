@@ -34,10 +34,56 @@ static void rounderCb(lv_disp_drv_t *, lv_area_t *a) {
   a->x2 |= 1;  a->y2 |= 1;
 }
 
+// Flushing runs on the other core: while one buffer is being sent to the panel,
+// LVGL renders the next part into the second buffer.
+struct FlushJob { lv_disp_drv_t *drv; lv_area_t area; lv_color_t *px; };
+static QueueHandle_t s_flushQ = nullptr;
+static SemaphoreHandle_t s_busMtx = nullptr;          // one user of the QSPI bus at a time
+static volatile uint32_t s_pxSent = 0, s_frames = 0, s_busyUs = 0;
+static volatile float s_fps = 0, s_mbps = 0, s_busyPct = 0;
+static uint32_t s_statT0 = 0;
+
+static void busLock() { if (s_busMtx) xSemaphoreTake(s_busMtx, portMAX_DELAY); }
+static void busUnlock() { if (s_busMtx) xSemaphoreGive(s_busMtx); }
+
+static void flushTask(void *) {
+  FlushJob j;
+  for (;;) {
+    if (xQueueReceive(s_flushQ, &j, portMAX_DELAY) != pdTRUE) continue;
+    uint32_t w = j.area.x2 - j.area.x1 + 1, h = j.area.y2 - j.area.y1 + 1;
+    uint32_t t0 = micros();
+    busLock();
+    s_gfx->draw16bitRGBBitmap(j.area.x1, j.area.y1, (uint16_t *)&j.px->full, w, h);
+    busUnlock();
+    s_busyUs += micros() - t0;
+    s_pxSent += w * h;
+    bool last = lv_disp_flush_is_last(j.drv);
+    lv_disp_flush_ready(j.drv);
+    if (last) s_frames++;
+  }
+}
+
 static void flushCb(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px) {
-  uint32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
-  s_gfx->draw16bitRGBBitmap(a->x1, a->y1, (uint16_t *)&px->full, w, h);
-  lv_disp_flush_ready(drv);
+  if (!s_flushQ) {                                     // before the task exists: send inline
+    uint32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+    busLock(); s_gfx->draw16bitRGBBitmap(a->x1, a->y1, (uint16_t *)&px->full, w, h); busUnlock();
+    lv_disp_flush_ready(drv);
+    return;
+  }
+  FlushJob j{drv, *a, px};
+  xQueueSend(s_flushQ, &j, portMAX_DELAY);
+}
+
+void hwDisplayStats(float &fps, float &mbps, float &busyPct) {
+  uint32_t now = millis();
+  if (now - s_statT0 >= 1000) {
+    float dt = (now - s_statT0) / 1000.0f;
+    s_fps = s_frames / dt;
+    s_mbps = s_pxSent * 2 / dt / 1e6f;
+    s_busyPct = s_busyUs / (dt * 10000.0f);
+    s_frames = 0; s_pxSent = 0; s_busyUs = 0; s_statT0 = now;
+  }
+  fps = s_fps; mbps = s_mbps; busyPct = s_busyPct;
 }
 
 static void touchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
@@ -168,6 +214,9 @@ bool hwInit() {
   s_dispDrv.hor_res = LCD_W;
   s_dispDrv.ver_res = LCD_H;
   s_dispDrv.flush_cb = flushCb;
+  s_busMtx = xSemaphoreCreateMutex();
+  s_flushQ = xQueueCreate(2, sizeof(FlushJob));
+  xTaskCreatePinnedToCore(flushTask, "flush", 4096, nullptr, 3, nullptr, 0);
   s_dispDrv.rounder_cb = rounderCb;
   s_dispDrv.draw_buf = &s_drawBuf;
   s_dispDrv.sw_rotate = 1;                         // LVGL rotates the image (and touch) for auto-rotation
@@ -193,10 +242,12 @@ int hwRotation() {
   return d ? (int)lv_disp_get_rotation(d) : 0;
 }
 
-void hwSetBrightness(uint8_t level) { s_gfx->setBrightness(level); }
+void hwSetBrightness(uint8_t level) { busLock(); s_gfx->setBrightness(level); busUnlock(); }
 
 void hwDisplayPower(bool on) {
+  busLock();
   if (on) s_gfx->displayOn(); else s_gfx->displayOff();
+  busUnlock();
 }
 
 void hwSetTouchOrientation(bool swapXY, bool mirrorX, bool mirrorY) {

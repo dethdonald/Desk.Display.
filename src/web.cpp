@@ -312,6 +312,8 @@ void webTick() {
   esp_ota_img_states_t st;
   if (run && esp_ota_get_state_partition(run, &st) == ESP_OK) d["ota_state"] = st == ESP_OTA_IMG_PENDING_VERIFY ? "pending_verify" : "valid";
   d["sound"] = soundStatus();
+  { float fps, mbps, busy; hwDisplayStats(fps, mbps, busy);
+    JsonObject ds = d["display"].to<JsonObject>(); ds["fps"] = fps; ds["mbps"] = mbps; ds["bus_busy_pct"] = busy; }
   d["has_admin_pass"] = String((const char *)(S("admin")["pass"] | "")).length() > 0;
   d["api_token"] = S("api")["token"] | "";
   String s; serializeJson(d, s);

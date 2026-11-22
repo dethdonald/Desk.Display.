@@ -56,9 +56,9 @@ static void applyRotation(bool fromImu = false) {
   }
   rot = ((rot % 4) + 4) % 4;
   if (rot != hwRotation()) {
-    hwSetRotation(rot);
     LOGI("display: rotation %d", rot * 90);
     if (fromImu) soundPlay(SND_ROTATE);
+    uiRotate(rot, fromImu);
   }
 }
 

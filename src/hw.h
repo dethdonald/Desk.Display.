@@ -20,6 +20,7 @@ bool hwInit();                         // PMU + RTC + LVGL (calls hwEarlyInit if
 void hwSetBrightness(uint8_t level);   // 0..255
 void hwSetRotation(int quarterTurns);  // 0..3, software rotation of display + touch
 int hwRotation();
+void hwDisplayStats(float &fps, float &mbps, float &busyPct);   // refreshed once a second
 void hwDisplayPower(bool on);
 void hwSetTouchOrientation(bool swapXY, bool mirrorX, bool mirrorY);
 lv_indev_t *hwTouchIndev();
