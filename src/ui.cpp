@@ -621,8 +621,8 @@ bool uiApplyLayout(const String &json, bool save, String *err) {
     s_previewing = false;
     LOGI("layout: saved (%d pages)", (int)s_pages.size());
   } else {
-    s_previewing = true;
-    LOGI("layout: previewing (%d pages)", (int)s_pages.size());
+    s_previewing = !s_savedJson.isEmpty();
+    LOGI(s_previewing ? "layout: previewing (%d pages)" : "layout: loaded (%d pages)", (int)s_pages.size());
   }
   return true;
 }

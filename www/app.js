@@ -398,7 +398,9 @@ TABS.dash = () => {
           meter(u("claude.seven_day.used_percentage"), 70, 90),
           h("div", { class: "small muted" }, "Resets " + renderTmpl("{claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}")),
           h("div", { class: "small muted" }, "Last update " + renderTmpl("{claude.updated|ago}") + (u("claude.stale") ? " (stale)" : ""))));
-    $("#dashWx")?.replaceChildren(h("h2", {}, "Weather"),
+    $("#dashWx")?.replaceChildren(h("div", { class: "row between" }, h("h2", { style: { margin: 0 } }, "Weather"),
+        h("button", { class: "btn sm", onclick: async () => { await act("refresh_weather"); toast("Updating weather…"); setTimeout(loadData, 4000); setTimeout(() => TABS.dash.draw?.(), 4200); } }, "Update now")),
+      u("weather.error") ? h("p", { class: "small", style: { color: "var(--bad)" } }, "Last update failed: " + u("weather.error")) : null,
       u("weather.temp") === undefined ? h("p", { class: "muted" }, u("weather.desc") === "Set location" ? "Set a location in Settings." : "Waiting for the first forecast.") :
         h("div", { class: "row" }, h("div", { class: "wx", style: { fontSize: "64px" } }, u("weather.icon")),
           h("div", {}, h("div", { style: { fontSize: "28px" } }, renderTmpl("{weather.temp:0}°")), h("div", { class: "muted" }, renderTmpl("{weather.desc} · H {weather.hi:0}° L {weather.lo:0}°")),
@@ -908,6 +910,7 @@ TABS.settings = () => {
       h("div", { class: "two" }, field("Units", sel([["imperial", "°F, mph"], ["metric", "°C, km/h"]], get(s, "weather.units"), v => set(s, "weather.units", v))),
         field("Refresh every (min)", inp("number", get(s, "weather.interval_min", 15), v => set(s, "weather.interval_min", v), { min: 5 }))),
       h("p", { class: "small muted" }, "Forecasts from Open-Meteo (free, no key)."),
+      h("button", { class: "btn sm", onclick: () => act("refresh_weather").then(() => toast("Updating weather…")) }, "Update weather now"),
       saveBtn("Save weather", () => saveSettings({ weather: s.weather }))),
     sec("sec-display", "Display",
       field("Brightness", inp("range", get(s, "display.brightness", 180), v => { set(s, "display.brightness", v); clearTimeout(TABS.settings.bt); TABS.settings.bt = setTimeout(() => saveSettings({ display: { brightness: v } }, "Brightness set"), 350); }, { min: 5, max: 255 })),

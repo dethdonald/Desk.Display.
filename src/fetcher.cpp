@@ -24,6 +24,7 @@ struct FetchCfg {
 static FetchCfg s_cfg;
 static SemaphoreHandle_t s_mtx;
 static volatile bool s_refresh = true;
+static volatile bool s_refreshWx = false;
 static volatile bool s_cfgChanged = true;
 static uint32_t s_wxNext = 0;
 
@@ -113,7 +114,7 @@ static void fetchWeather(const FetchCfg &cfg) {
   bool imperial = cfg.units != "metric";
   char url[512];
   snprintf(url, sizeof url,
-           "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+           "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day,precipitation"
            "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"
            "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max"
@@ -341,7 +342,8 @@ static void task(void *) {
     if (WiFi.isConnected() && time(nullptr) > 1700000000) {
       bool force = s_refresh; s_refresh = false;
       if (s_cfgChanged) { s_cfgChanged = false; force = true; }
-      if (force || (int32_t)(now - s_wxNext) >= 0) {
+      if (force || s_refreshWx || (int32_t)(now - s_wxNext) >= 0) {
+        s_refreshWx = false;
         fetchWeather(cfg);
         s_wxNext = millis() + cfg.wxIntervalMin * 60000UL;
       }
@@ -368,7 +370,7 @@ static void task(void *) {
 void fetcherStart() {
   mtx();
   fetcherApplySettings();
-  xTaskCreatePinnedToCore(task, "fetcher", 12288, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(task, "fetcher", 24576, nullptr, 1, nullptr, 0);   // HTTPS (TLS handshake) needs a deep stack
 }
 
 void fetcherApplySettings() {
@@ -401,6 +403,7 @@ void fetcherApplySettings() {
 }
 
 void fetcherRefreshAll() { s_refresh = true; }
+void fetcherRefreshWeather() { s_refreshWx = true; }
 
 void fetcherTestSource(const String &url) {
   Lock l;

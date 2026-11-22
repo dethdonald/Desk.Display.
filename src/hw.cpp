@@ -155,19 +155,13 @@ bool hwInit() {
   if (i2cProbe(0x51)) s_hasRtc = s_rtc.begin(Wire, I2C_SDA, I2C_SCL);
   LOGI("hw: RTC %s", s_hasRtc ? "ok" : "missing");
 
-  // LVGL: draw buffers in internal DMA-capable RAM like Waveshare's example (PSRAM as fallback)
+  // LVGL draw buffers live in PSRAM: the QSPI bus copies pixels into its own DMA buffer,
+  // and internal RAM is needed for Wi-Fi, TLS (HTTPS) and the web server.
   lv_init();
-  size_t lines = 48;
+  size_t lines = 80;
   size_t bufPx = LCD_W * lines;
-  lv_color_t *b1 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-  lv_color_t *b2 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-  if (!b1 || !b2) {
-    LOGI("hw: internal DMA buffers unavailable, using PSRAM");
-    if (b1) heap_caps_free(b1);
-    if (b2) heap_caps_free(b2);
-    b1 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    b2 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-  }
+  lv_color_t *b1 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  lv_color_t *b2 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
   if (!b1 || !b2) { LOGI("hw: LVGL buffer alloc failed"); return false; }
   lv_disp_draw_buf_init(&s_drawBuf, b1, b2, bufPx);
   lv_disp_drv_init(&s_dispDrv);

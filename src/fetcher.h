@@ -7,6 +7,7 @@
 void fetcherStart();
 void fetcherApplySettings();          // main loop: snapshot settings for the task
 void fetcherRefreshAll();
+void fetcherRefreshWeather();
 // Claude Code status line payload (or the /usage API shape). Safe from any task.
 bool claudeIngest(JsonVariantConst body, String &err);
 
