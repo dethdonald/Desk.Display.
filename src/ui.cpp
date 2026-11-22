@@ -1,0 +1,735 @@
+#include "ui.h"
+#include "config.h"
+#include "fonts.h"
+#include "datastore.h"
+#include "settings.h"
+#include "input.h"
+#include "hw.h"
+#include "logbuf.h"
+#include <ArduinoJson.h>
+#include <LittleFS.h>
+#include <vector>
+#include <time.h>
+
+// ---------------------------------------------------------------- default layout
+static const char DEFAULT_LAYOUT[] = R"JSON({
+  "version": 1,
+  "grid": 12,
+  "home": 0,
+  "theme": {"bg": "#000000", "fg": "#F5F2EB", "muted": "#8C8A85", "accent": "#D97757",
+            "ok": "#5FB87A", "warn": "#E8B04B", "bad": "#E5534B", "track": "#232323"},
+  "night_theme": {"bg": "#000000", "fg": "#B5513A", "muted": "#6B2E22", "accent": "#B5513A",
+                  "ok": "#7A3A2A", "warn": "#9A4A30", "bad": "#C4553E", "track": "#1A0D0A"},
+  "pages": [
+    {"name": "Home", "enabled": true, "duration": 20, "widgets": [
+      {"type": "ring", "x": 0, "y": 0, "w": 12, "h": 12, "key": "claude.five_hour.used_percentage",
+       "thickness": 14, "start": 135, "sweep": 270, "color_mode": "threshold", "warn": 60, "bad": 85, "text": "", "caption": ""},
+      {"type": "ring", "x": 1, "y": 1, "w": 10, "h": 10, "key": "claude.seven_day.used_percentage",
+       "thickness": 6, "start": 135, "sweep": 270, "color_mode": "fixed", "color": "accent", "text": "", "caption": ""},
+      {"type": "clock", "x": 2, "y": 3, "w": 8, "h": 3, "size": 96, "ampm": true, "color": "fg"},
+      {"type": "date", "x": 2, "y": 6, "w": 8, "h": 1, "fmt": "%A, %b %e", "size": 22, "color": "muted"},
+      {"type": "weather", "x": 3, "y": 7, "w": 6, "h": 2, "icon_size": 48, "size": 32, "style": "row", "show_desc": false},
+      {"type": "text", "x": 2, "y": 10, "w": 8, "h": 1, "size": 18, "color": "muted", "align": "center",
+       "text": "5h {claude.five_hour.used_percentage:0}%   wk {claude.seven_day.used_percentage:0}%"}
+    ]},
+    {"name": "Claude", "enabled": true, "duration": 15, "widgets": [
+      {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 28, "color": "fg", "align": "center", "text": "Claude usage"},
+      {"type": "bar", "x": 1, "y": 2, "w": 10, "h": 3, "key": "claude.five_hour.used_percentage", "label": "Current session",
+       "sub": "Resets in {claude.five_hour.resets_at|in}", "size": 22, "bar_h": 18, "warn": 60, "bad": 85, "color_mode": "threshold"},
+      {"type": "bar", "x": 1, "y": 5, "w": 10, "h": 3, "key": "claude.seven_day.used_percentage", "label": "This week",
+       "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}", "size": 22, "bar_h": 18, "warn": 70, "bad": 90, "color_mode": "threshold"},
+      {"type": "text", "x": 1, "y": 8, "w": 10, "h": 1, "size": 18, "color": "muted", "align": "center",
+       "text": "Context {claude.context_window.used_percentage:0}%  {claude.model.display_name}"},
+      {"type": "text", "x": 1, "y": 10, "w": 10, "h": 1, "size": 16, "color": "muted", "align": "center",
+       "text": "Updated {claude.updated|ago}"}
+    ]},
+    {"name": "Weather", "enabled": true, "duration": 15, "widgets": [
+      {"type": "text", "x": 1, "y": 0, "w": 10, "h": 2, "size": 24, "color": "muted", "align": "center", "text": "{weather.place}"},
+      {"type": "weather", "x": 1, "y": 2, "w": 10, "h": 4, "icon_size": 128, "size": 64, "style": "row", "show_desc": false},
+      {"type": "text", "x": 1, "y": 6, "w": 10, "h": 1, "size": 22, "color": "fg", "align": "center",
+       "text": "{weather.desc}   H {weather.hi:0}°  L {weather.lo:0}°"},
+      {"type": "forecast", "x": 0, "y": 8, "w": 12, "h": 3, "mode": "daily", "count": 5, "icon_size": 32, "size": 18}
+    ]},
+    {"name": "Info", "enabled": true, "duration": 10, "widgets": [
+      {"type": "text", "x": 1, "y": 1, "w": 10, "h": 1, "size": 24, "color": "fg", "align": "center", "text": "{sys.name}"},
+      {"type": "qr", "x": 4, "y": 3, "w": 4, "h": 4},
+      {"type": "text", "x": 1, "y": 8, "w": 10, "h": 1, "size": 20, "color": "muted", "align": "center", "text": "{sys.url}"},
+      {"type": "text", "x": 1, "y": 9, "w": 10, "h": 1, "size": 18, "color": "muted", "align": "center",
+       "text": "{sym:wifi} {sys.rssi}dBm   {sym:battery} {sys.battery_text}"},
+      {"type": "text", "x": 1, "y": 10, "w": 10, "h": 1, "size": 16, "color": "muted", "align": "center", "text": "v{sys.version}  up {sys.uptime_text}"}
+    ]}
+  ]
+})JSON";
+
+// ---------------------------------------------------------------- PSRAM JSON allocator
+struct SpiRamAllocator : ArduinoJson::Allocator {
+  void *allocate(size_t n) override { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  void deallocate(void *p) override { heap_caps_free(p); }
+  void *reallocate(void *p, size_t n) override { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+};
+static SpiRamAllocator s_psAlloc;
+
+// ---------------------------------------------------------------- state
+struct Theme { lv_color_t bg, fg, muted, accent, ok, warn, bad, track; };
+
+struct Widget {
+  String type;
+  JsonObjectConst p;
+  lv_obj_t *box = nullptr;
+  lv_obj_t *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+  std::vector<lv_obj_t *> cols;      // forecast columns: [label, icon, temp] * n
+  String cache[4];
+  int32_t lastVal = INT32_MIN;
+};
+
+struct Page {
+  lv_obj_t *scr = nullptr;
+  lv_obj_t *canvas = nullptr;
+  std::vector<Widget> widgets;
+  String name;
+  uint16_t duration = 0;
+};
+
+static JsonDocument *s_layout = nullptr;        // backing doc for the live pages
+static String s_savedJson;                      // last saved layout
+static bool s_previewing = false;
+static std::vector<Page> s_pages;
+static int s_cur = 0;
+static int s_home = 0;
+static Theme s_theme;
+static bool s_night = false, s_sleep = false;
+static uint32_t s_lastUpdate = 0, s_lastShift = 0;
+static int s_shiftIdx = 0;
+static lv_obj_t *s_dots = nullptr;
+static uint32_t s_dotsHideAt = 0;
+static lv_obj_t *s_overlay = nullptr;
+static lv_obj_t *s_toast = nullptr;
+static uint32_t s_toastHideAt = 0;
+static int s_lastSecond = -1;
+
+// ---------------------------------------------------------------- helpers
+static lv_color_t parseHex(const char *s, lv_color_t def) {
+  if (!s || s[0] != '#' || strlen(s) < 7) return def;
+  return lv_color_hex(strtoul(s + 1, nullptr, 16));
+}
+
+static lv_color_t themeColor(const char *name, lv_color_t def) {
+  if (!name || !name[0]) return def;
+  if (name[0] == '#') return parseHex(name, def);
+  if (!strcmp(name, "fg")) return s_theme.fg;
+  if (!strcmp(name, "muted")) return s_theme.muted;
+  if (!strcmp(name, "accent")) return s_theme.accent;
+  if (!strcmp(name, "ok")) return s_theme.ok;
+  if (!strcmp(name, "warn")) return s_theme.warn;
+  if (!strcmp(name, "bad")) return s_theme.bad;
+  if (!strcmp(name, "track")) return s_theme.track;
+  if (!strcmp(name, "bg")) return s_theme.bg;
+  return def;
+}
+
+static void loadTheme(JsonObjectConst t) {
+  s_theme.bg = parseHex(t["bg"] | "#000000", lv_color_black());
+  s_theme.fg = parseHex(t["fg"] | "#FFFFFF", lv_color_white());
+  s_theme.muted = parseHex(t["muted"] | "#888888", lv_color_hex(0x888888));
+  s_theme.accent = parseHex(t["accent"] | "#D97757", lv_color_hex(0xD97757));
+  s_theme.ok = parseHex(t["ok"] | "#5FB87A", lv_color_hex(0x5FB87A));
+  s_theme.warn = parseHex(t["warn"] | "#E8B04B", lv_color_hex(0xE8B04B));
+  s_theme.bad = parseHex(t["bad"] | "#E5534B", lv_color_hex(0xE5534B));
+  s_theme.track = parseHex(t["track"] | "#222222", lv_color_hex(0x222222));
+}
+
+static lv_obj_t *plainObj(lv_obj_t *parent) {
+  lv_obj_t *o = lv_obj_create(parent);
+  lv_obj_remove_style_all(o);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  return o;
+}
+
+static lv_obj_t *mkLabel(lv_obj_t *parent, int size, lv_color_t color) {
+  lv_obj_t *l = lv_label_create(parent);
+  lv_obj_set_style_text_font(l, fontFor(size), 0);
+  lv_obj_set_style_text_color(l, color, 0);
+  lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+  lv_label_set_text(l, "");
+  return l;
+}
+
+static void setText(lv_obj_t *l, String &cache, const String &txt) {
+  if (!l || cache == txt) return;
+  cache = txt;
+  lv_label_set_text(l, txt.c_str());
+}
+
+static lv_text_align_t alignOf(JsonObjectConst p, lv_text_align_t def = LV_TEXT_ALIGN_CENTER) {
+  const char *a = p["align"] | "";
+  if (!strcmp(a, "left")) return LV_TEXT_ALIGN_LEFT;
+  if (!strcmp(a, "right")) return LV_TEXT_ALIGN_RIGHT;
+  if (!strcmp(a, "center")) return LV_TEXT_ALIGN_CENTER;
+  return def;
+}
+
+static lv_color_t valueColor(JsonObjectConst p, double v, bool has) {
+  const char *mode = p["color_mode"] | "fixed";
+  if (!strcmp(mode, "threshold") && has) {
+    double warn = p["warn"] | 60.0, bad = p["bad"] | 85.0;
+    if (v >= bad) return s_theme.bad;
+    if (v >= warn) return s_theme.warn;
+    return s_theme.ok;
+  }
+  return themeColor(p["color"] | "accent", s_theme.accent);
+}
+
+static String keyOf(JsonObjectConst p) { return String((const char *)(p["key"] | "")); }
+
+
+// ---------------------------------------------------------------- widget builders
+static void buildWidget(Page &pg, JsonObjectConst p) {
+  Widget w;
+  w.type = (const char *)(p["type"] | "text");
+  w.p = p;
+  int gx = constrain((int)(p["x"] | 0), 0, GRID_CELLS - 1);
+  int gy = constrain((int)(p["y"] | 0), 0, GRID_CELLS - 1);
+  int gw = constrain((int)(p["w"] | 4), 1, GRID_CELLS - gx);
+  int gh = constrain((int)(p["h"] | 1), 1, GRID_CELLS - gy);
+  int W = gw * CELL_PX, H = gh * CELL_PX;
+
+  w.box = plainObj(pg.canvas);
+  lv_obj_set_pos(w.box, gx * CELL_PX, gy * CELL_PX);
+  lv_obj_set_size(w.box, W, H);
+  const char *bg = p["bg"] | "";
+  if (bg[0]) {
+    lv_obj_set_style_bg_color(w.box, themeColor(bg, s_theme.track), 0);
+    lv_obj_set_style_bg_opa(w.box, (lv_opa_t)(int)(p["bg_opa"] | 255), 0);
+  }
+  lv_obj_set_style_radius(w.box, p["radius"] | 0, 0);
+  int border = p["border"] | 0;
+  if (border > 0) {
+    lv_obj_set_style_border_width(w.box, border, 0);
+    lv_obj_set_style_border_color(w.box, themeColor(p["border_color"] | "muted", s_theme.muted), 0);
+  }
+  int pad = p["pad"] | 0;
+  lv_obj_set_style_pad_all(w.box, pad, 0);
+  lv_color_t fg = themeColor(p["color"] | "fg", s_theme.fg);
+  int size = p["size"] | 24;
+
+  if (w.type == "clock") {
+    lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
+    w.a = mkLabel(w.box, size, fg);
+    w.b = mkLabel(w.box, max(14, size / 3), themeColor(p["ampm_color"] | "muted", s_theme.muted));
+    lv_obj_set_style_pad_bottom(w.b, size / 7, 0);
+    lv_obj_set_style_pad_left(w.b, 6, 0);
+  } else if (w.type == "date" || w.type == "text" || w.type == "value") {
+    w.a = mkLabel(w.box, size, fg);
+    lv_obj_set_width(w.a, W - 2 * pad);
+    lv_obj_set_style_text_align(w.a, alignOf(p), 0);
+    const char *ov = p["overflow"] | "wrap";
+    lv_label_set_long_mode(w.a, !strcmp(ov, "scroll") ? LV_LABEL_LONG_SCROLL_CIRCULAR
+                               : !strcmp(ov, "clip") ? LV_LABEL_LONG_CLIP : LV_LABEL_LONG_WRAP);
+    if (w.type == "value") {
+      w.b = mkLabel(w.box, p["label_size"] | 16, themeColor(p["label_color"] | "muted", s_theme.muted));
+      lv_obj_set_width(w.b, W - 2 * pad);
+      lv_obj_set_style_text_align(w.b, alignOf(p), 0);
+      lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    } else {
+      lv_obj_align(w.a, LV_ALIGN_LEFT_MID, 0, 0);
+    }
+  } else if (w.type == "bar") {
+    lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(w.box, 6, 0);
+    lv_obj_t *row = plainObj(w.box);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    w.a = mkLabel(row, size, fg);                       // label
+    lv_obj_align(w.a, LV_ALIGN_LEFT_MID, 0, 0);
+    w.c = mkLabel(row, size, fg);                       // value
+    lv_obj_align(w.c, LV_ALIGN_RIGHT_MID, 0, 0);
+    w.d = lv_bar_create(w.box);
+    lv_obj_clear_flag(w.d, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(w.d, LV_PCT(100), p["bar_h"] | 14);
+    lv_bar_set_range(w.d, 0, 1000);
+    lv_obj_set_style_bg_color(w.d, themeColor(p["track"] | "track", s_theme.track), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(w.d, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(w.d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_radius(w.d, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+    w.b = mkLabel(w.box, p["sub_size"] | 16, s_theme.muted);  // sub text
+  } else if (w.type == "ring") {
+    int side = min(W, H) - 2 * pad;
+    w.d = lv_arc_create(w.box);
+    lv_obj_set_size(w.d, side, side);
+    lv_obj_center(w.d);
+    lv_obj_remove_style(w.d, nullptr, LV_PART_KNOB);
+    lv_obj_clear_flag(w.d, LV_OBJ_FLAG_CLICKABLE);
+    int start = p["start"] | 135, sweep = constrain((int)(p["sweep"] | 270), 10, 360);
+    lv_arc_set_bg_angles(w.d, start, start + sweep);
+    lv_arc_set_rotation(w.d, 0);
+    lv_arc_set_range(w.d, 0, 1000);
+    lv_arc_set_value(w.d, 0);
+    int th = p["thickness"] | 12;
+    lv_obj_set_style_arc_width(w.d, th, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(w.d, th, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(w.d, themeColor(p["track"] | "track", s_theme.track), LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(w.d, p["rounded"] | true, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(w.d, p["rounded"] | true, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(w.d, 0, 0);
+    w.a = mkLabel(w.box, size, fg);
+    lv_obj_align(w.a, LV_ALIGN_CENTER, 0, -(int)(p["caption_size"] | 16) / 2);
+    w.b = mkLabel(w.box, p["caption_size"] | 16, s_theme.muted);
+    lv_obj_align(w.b, LV_ALIGN_CENTER, 0, size / 2 + 4);
+  } else if (w.type == "weather") {
+    bool row = strcmp(p["style"] | "row", "row") == 0;
+    lv_obj_set_flex_flow(w.box, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(w.box, 14, 0);
+    int is = p["icon_size"] | 64;
+    w.a = lv_label_create(w.box);
+    lv_obj_set_style_text_font(w.a, wxFontFor(is), 0);
+    lv_obj_set_style_text_color(w.a, themeColor(p["icon_color"] | "fg", s_theme.fg), 0);
+    lv_label_set_text(w.a, "");
+    lv_obj_t *col = plainObj(w.box);
+    lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, row ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    w.b = mkLabel(col, size, fg);
+    if (p["show_desc"] | false) w.c = mkLabel(col, p["desc_size"] | 18, s_theme.muted);
+  } else if (w.type == "forecast") {
+    lv_obj_set_flex_flow(w.box, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(w.box, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    int n = constrain((int)(p["count"] | 5), 1, 8);
+    int is = p["icon_size"] | 32;
+    for (int i = 0; i < n; i++) {
+      lv_obj_t *col = plainObj(w.box);
+      lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_row(col, 4, 0);
+      lv_obj_t *l1 = mkLabel(col, size, s_theme.muted);
+      lv_obj_t *ic = lv_label_create(col);
+      lv_obj_set_style_text_font(ic, wxFontFor(is), 0);
+      lv_obj_set_style_text_color(ic, s_theme.fg, 0);
+      lv_label_set_text(ic, "");
+      lv_obj_t *l2 = mkLabel(col, size, fg);
+      w.cols.push_back(l1); w.cols.push_back(ic); w.cols.push_back(l2);
+    }
+  } else if (w.type == "icon") {
+    int is = p["size"] | 64;
+    w.a = lv_label_create(w.box);
+    lv_obj_set_style_text_font(w.a, wxFontFor(is), 0);
+    lv_obj_set_style_text_color(w.a, fg, 0);
+    lv_label_set_text(w.a, "");
+    lv_obj_center(w.a);
+  } else if (w.type == "qr") {
+    int side = min(W, H) - 2 * pad - 8;
+    w.d = lv_qrcode_create(w.box, side, lv_color_black(), lv_color_white());
+    lv_obj_set_style_border_color(w.d, lv_color_white(), 0);
+    lv_obj_set_style_border_width(w.d, 4, 0);
+    lv_obj_center(w.d);
+  } else if (w.type == "box") {
+    // decoration only (bg/border/radius already applied)
+  } else {
+    w.a = mkLabel(w.box, 14, s_theme.bad);
+    lv_label_set_text_fmt(w.a, "unknown: %s", w.type.c_str());
+  }
+  pg.widgets.push_back(std::move(w));
+}
+
+// ---------------------------------------------------------------- widget updates
+static void updateWidget(Widget &w, bool force) {
+  JsonObjectConst p = w.p;
+  if (force) { for (auto &c : w.cache) c = ""; w.lastVal = INT32_MIN; }
+
+  if (w.type == "clock") {
+    time_t now = time(nullptr);
+    if (now < 1700000000) { setText(w.a, w.cache[0], "--:--"); return; }
+    struct tm t; localtime_r(&now, &t);
+    const char *mode = p["h24"] | "auto";
+    bool h24 = !strcmp(mode, "24") || (!strcmp(mode, "auto") && gTimeH24);
+    bool secs = p["seconds"] | false;
+    char buf[16];
+    if (h24) strftime(buf, sizeof buf, secs ? "%H:%M:%S" : "%H:%M", &t);
+    else {
+      int h = t.tm_hour % 12; if (h == 0) h = 12;
+      if (secs) snprintf(buf, sizeof buf, "%d:%02d:%02d", h, t.tm_min, t.tm_sec);
+      else snprintf(buf, sizeof buf, "%d:%02d", h, t.tm_min);
+    }
+    setText(w.a, w.cache[0], buf);
+    setText(w.b, w.cache[1], (!h24 && (p["ampm"] | true)) ? (t.tm_hour < 12 ? "AM" : "PM") : "");
+  } else if (w.type == "date") {
+    time_t now = time(nullptr);
+    if (now < 1700000000) { setText(w.a, w.cache[0], ""); return; }
+    struct tm t; localtime_r(&now, &t);
+    char buf[64];
+    strftime(buf, sizeof buf, p["fmt"] | "%A, %b %e", &t);
+    String s = buf; s.replace("  ", " ");
+    setText(w.a, w.cache[0], s);
+  } else if (w.type == "text") {
+    setText(w.a, w.cache[0], dsRender(p["text"] | ""));
+  } else if (w.type == "value") {
+    setText(w.a, w.cache[0], dsRender(p["value"] | ""));
+    setText(w.b, w.cache[1], dsRender(p["label"] | ""));
+    double v; bool has = dsGetNum(keyOf(p), v);
+    if (strcmp(p["color_mode"] | "fixed", "threshold") == 0) {
+      int32_t q = has ? (int32_t)(v * 10) : -1;
+      if (q != w.lastVal) { w.lastVal = q; lv_obj_set_style_text_color(w.a, valueColor(p, v, has), 0); }
+    }
+  } else if (w.type == "bar" || w.type == "ring") {
+    double v = 0; bool has = dsGetNum(keyOf(p), v);
+    double mn = p["min"] | 0.0, mx = p["max"] | 100.0;
+    double frac = has && mx > mn ? constrain((v - mn) / (mx - mn), 0.0, 1.0) : 0.0;
+    int32_t q = has ? (int32_t)lround(frac * 1000) : -1;
+    if (q != w.lastVal) {
+      w.lastVal = q;
+      lv_color_t col = valueColor(p, v, has);
+      if (w.type == "bar") {
+        lv_bar_set_value(w.d, max((int32_t)0, q), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(w.d, col, LV_PART_INDICATOR);
+      } else {
+        lv_arc_set_value(w.d, max((int32_t)0, q));
+        lv_obj_set_style_arc_color(w.d, col, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_opa(w.d, q > 0 ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_INDICATOR);
+      }
+    }
+    if (w.type == "bar") {
+      setText(w.a, w.cache[0], dsRender(p["label"] | ""));
+      String vt = has ? dsFormatNumber(v, 0) + ((p["unit"] | "%")) : String("--");
+      if (!(p["show_value"] | true)) vt = "";
+      setText(w.c, w.cache[2], vt);
+      setText(w.b, w.cache[1], has ? dsRender(p["sub"] | "") : String((const char *)(p["empty"] | "No data yet")));
+    } else {
+      String key = keyOf(p);
+      String defText = "{" + key + "|pct}";
+      setText(w.a, w.cache[0], dsRender(p["text"].is<const char *>() ? (const char *)p["text"] : defText.c_str()));
+      setText(w.b, w.cache[1], dsRender(p["caption"] | ""));
+    }
+  } else if (w.type == "weather") {
+    DsEntry e;
+    String icon = dsGet("weather.icon", e) ? e.str : String("");
+    setText(w.a, w.cache[0], icon);
+    const char *unit = strcmp(S("weather")["units"] | "imperial", "metric") == 0 ? "C" : "F";
+    String t = dsRender("{weather.temp:0}°");
+    if (p["show_unit"] | false) t += unit;
+    setText(w.b, w.cache[1], t);
+    if (w.c) setText(w.c, w.cache[2], dsRender("{weather.desc}"));
+  } else if (w.type == "forecast") {
+    bool hourly = strcmp(p["mode"] | "daily", "hourly") == 0;
+    int step = hourly ? (int)(p["step"] | 2) : 1;
+    int n = w.cols.size() / 3;
+    std::vector<String> txt;
+    String agg;
+    for (int i = 0; i < n; i++) {
+      String base = hourly ? "weather.h" + String(i * step) : "weather.d" + String(i);
+      String l1 = hourly ? dsRender(("{" + base + ".t|hour}").c_str()) : (i == 0 ? String("Today") : dsRender(("{" + base + ".t|day}").c_str()));
+      DsEntry e; String ic = dsGet(base + ".icon", e) ? e.str : String("");
+      String l2 = hourly ? dsRender(("{" + base + ".temp:0}°").c_str())
+                         : dsRender(("{" + base + ".hi:0}°/{" + base + ".lo:0}°").c_str());
+      txt.push_back(l1); txt.push_back(ic); txt.push_back(l2);
+      agg += l1 + "\x1f" + ic + "\x1f" + l2 + "\x1e";
+    }
+    if (agg != w.cache[0]) {
+      w.cache[0] = agg;
+      for (size_t i = 0; i < txt.size(); i++) lv_label_set_text(w.cols[i], txt[i].c_str());
+    }
+  } else if (w.type == "icon") {
+    DsEntry e;
+    String key = keyOf(p);
+    String g = key.length() && dsGet(key, e) ? e.str : String((const char *)(p["glyph"] | ""));
+    setText(w.a, w.cache[0], g);
+  } else if (w.type == "qr") {
+    DsEntry e;
+    String url = dsGet("sys.url", e) ? e.str : String("");
+    if (url.length() && url != w.cache[0]) {
+      w.cache[0] = url;
+      lv_qrcode_update(w.d, url.c_str(), url.length());
+    }
+  }
+}
+
+// ---------------------------------------------------------------- pages
+static void screenEventCb(lv_event_t *e) {
+  lv_indev_t *indev = lv_indev_get_act();
+  lv_point_t pt = {0, 0};
+  if (indev) lv_indev_get_point(indev, &pt);
+  inputTouch(lv_event_get_code(e), pt);
+}
+
+static void destroyPages(std::vector<Page> &pages) {
+  for (auto &pg : pages) if (pg.scr) lv_obj_del(pg.scr);
+  pages.clear();
+}
+
+static void updateDots();
+
+static bool buildFromDoc(JsonDocument *doc) {
+  JsonObjectConst root = doc->as<JsonObjectConst>();
+  bool useNight = s_night && (S("display")["night"]["use_night_theme"] | true) && root["night_theme"].is<JsonObjectConst>();
+  loadTheme(useNight ? root["night_theme"] : root["theme"]);
+
+  std::vector<Page> pages;
+  for (JsonObjectConst pj : root["pages"].as<JsonArrayConst>()) {
+    if (!(pj["enabled"] | true)) continue;
+    Page pg;
+    pg.name = (const char *)(pj["name"] | "Page");
+    pg.duration = pj["duration"] | 0;
+    pg.scr = lv_obj_create(nullptr);
+    lv_obj_clear_flag(pg.scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(pg.scr, themeColor(pj["bg"] | "", s_theme.bg), 0);
+    lv_obj_set_style_bg_opa(pg.scr, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_PRESS_LOST, nullptr);
+    pg.canvas = plainObj(pg.scr);
+    lv_obj_set_size(pg.canvas, LCD_W, LCD_H);
+    for (JsonObjectConst wj : pj["widgets"].as<JsonArrayConst>()) buildWidget(pg, wj);
+    pages.push_back(std::move(pg));
+  }
+  if (pages.empty()) {                         // never leave the user with nothing on screen
+    Page pg;
+    pg.name = "Empty";
+    pg.scr = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(pg.scr, lv_color_black(), 0);
+    lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_ALL, nullptr);
+    pg.canvas = plainObj(pg.scr);
+    lv_obj_set_size(pg.canvas, LCD_W, LCD_H);
+    lv_obj_t *l = mkLabel(pg.canvas, 20, lv_color_white());
+    lv_label_set_text(l, "No pages enabled.\nOpen the web UI to add one.");
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(l);
+    pages.push_back(std::move(pg));
+  }
+
+  lv_anim_del_all();
+  int keep = s_pages.empty() ? -1 : s_cur;
+  std::vector<Page> old = std::move(s_pages);
+  s_pages = std::move(pages);
+  s_home = constrain((int)(root["home"] | 0), 0, (int)s_pages.size() - 1);
+  s_cur = (keep >= 0 && keep < (int)s_pages.size()) ? keep : s_home;
+  for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
+  lv_scr_load(s_pages[s_cur].scr);
+  destroyPages(old);
+  updateDots();
+  return true;
+}
+
+bool uiValidateLayout(const String &json, String &err) {
+  JsonDocument doc;
+  DeserializationError e = deserializeJson(doc, json);
+  if (e) { err = String("JSON error: ") + e.c_str(); return false; }
+  if (!doc["pages"].is<JsonArray>() || doc["pages"].size() == 0) { err = "Layout needs at least one page"; return false; }
+  int i = 0;
+  for (JsonObject pg : doc["pages"].as<JsonArray>()) {
+    if (!pg["widgets"].is<JsonArray>()) { err = "Page " + String(i) + " has no widgets array"; return false; }
+    if (pg["widgets"].size() > 40) { err = "Page " + String(i) + " has more than 40 widgets"; return false; }
+    i++;
+  }
+  if (i > 16) { err = "At most 16 pages"; return false; }
+  return true;
+}
+
+static bool loadDocFrom(const String &json, JsonDocument *&out) {
+  JsonDocument *doc = new JsonDocument(&s_psAlloc);
+  if (deserializeJson(*doc, json)) { delete doc; return false; }
+  out = doc;
+  return true;
+}
+
+bool uiApplyLayout(const String &json, bool save, String *err) {
+  String e;
+  if (!uiValidateLayout(json, e)) { if (err) *err = e; LOGI("layout: rejected (%s)", e.c_str()); return false; }
+  JsonDocument *doc = nullptr;
+  if (!loadDocFrom(json, doc)) { if (err) *err = "parse failed"; return false; }
+  JsonDocument *old = s_layout;
+  s_layout = doc;
+  buildFromDoc(s_layout);
+  delete old;
+  if (save) {
+    File f = LittleFS.open(LAYOUT_FILE, "w");
+    if (f) { f.print(json); f.close(); }
+    s_savedJson = json;
+    s_previewing = false;
+    LOGI("layout: saved (%d pages)", (int)s_pages.size());
+  } else {
+    s_previewing = true;
+    LOGI("layout: previewing (%d pages)", (int)s_pages.size());
+  }
+  return true;
+}
+
+void uiRevertPreview() {
+  if (s_previewing) uiApplyLayout(s_savedJson, false), s_previewing = false;
+}
+
+String uiLayoutJson() { return s_savedJson; }
+String uiLayoutDefaultJson() { return DEFAULT_LAYOUT; }
+
+// ---------------------------------------------------------------- dots / overlays
+static void updateDots() {
+  if (!s_dots) {
+    s_dots = plainObj(lv_layer_top());
+    lv_obj_set_size(s_dots, LV_SIZE_CONTENT, 16);
+    lv_obj_align(s_dots, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_flex_flow(s_dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(s_dots, 8, 0);
+  }
+  lv_obj_clean(s_dots);
+  int n = s_pages.size();
+  for (int i = 0; i < n && n > 1; i++) {
+    lv_obj_t *d = plainObj(s_dots);
+    bool on = i == s_cur;
+    lv_obj_set_size(d, on ? 18 : 8, 8);
+    lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(d, on ? s_theme.fg : s_theme.muted, 0);
+  }
+  const char *mode = S("controls")["page_dots"] | "on_change";
+  if (!strcmp(mode, "never") || n < 2) lv_obj_add_flag(s_dots, LV_OBJ_FLAG_HIDDEN);
+  else {
+    lv_obj_clear_flag(s_dots, LV_OBJ_FLAG_HIDDEN);
+    s_dotsHideAt = !strcmp(mode, "always") ? 0 : millis() + 1800;
+  }
+}
+
+static void overlayTapCb(lv_event_t *) { uiHideOverlay(); }
+
+void uiShowQr(const String &url, const String &caption) {
+  if (!lv_is_initialized()) return;
+  uiHideOverlay();
+  s_overlay = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_overlay);
+  lv_obj_set_size(s_overlay, LCD_W, LCD_H);
+  lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s_overlay, overlayTapCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *qr = lv_qrcode_create(s_overlay, 240, lv_color_black(), lv_color_white());
+  lv_obj_set_style_border_color(qr, lv_color_white(), 0);
+  lv_obj_set_style_border_width(qr, 8, 0);
+  lv_qrcode_update(qr, url.c_str(), url.length());
+  lv_obj_align(qr, LV_ALIGN_CENTER, 0, -40);
+  lv_obj_t *l = mkLabel(s_overlay, 22, lv_color_white());
+  lv_label_set_text(l, caption.c_str());
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(l, LV_ALIGN_CENTER, 0, 130);
+  lv_obj_t *h = mkLabel(s_overlay, 16, lv_color_hex(0x888888));
+  lv_label_set_text(h, "Tap to close");
+  lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -24);
+}
+
+bool uiOverlayVisible() { return s_overlay != nullptr; }
+void uiHideOverlay() {
+  if (s_overlay) { lv_obj_del(s_overlay); s_overlay = nullptr; }
+}
+
+void uiToast(const String &msg, uint32_t ms) {
+  if (!lv_is_initialized()) return;
+  if (!s_toast) {
+    s_toast = mkLabel(lv_layer_top(), 20, lv_color_white());
+    lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_toast, 18, 0);
+    lv_obj_set_style_pad_hor(s_toast, 18, 0);
+    lv_obj_set_style_pad_ver(s_toast, 10, 0);
+  }
+  lv_label_set_text(s_toast, msg.c_str());
+  lv_obj_align(s_toast, LV_ALIGN_BOTTOM_MID, 0, -40);
+  lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+  s_toastHideAt = millis() + ms;
+}
+
+// ---------------------------------------------------------------- navigation
+void uiGoto(int index, int dir) {
+  int n = s_pages.size();
+  if (n == 0) return;
+  index = ((index % n) + n) % n;
+  if (index == s_cur && dir == 0) return;
+  s_cur = index;
+  for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
+  const char *tr = S("controls")["transition"] | "slide";
+  int ms = S("controls")["transition_ms"] | 250;
+  lv_scr_load_anim_t anim = LV_SCR_LOAD_ANIM_NONE;
+  if (!strcmp(tr, "slide")) anim = dir < 0 ? LV_SCR_LOAD_ANIM_MOVE_RIGHT : LV_SCR_LOAD_ANIM_MOVE_LEFT;
+  else if (!strcmp(tr, "fade")) anim = LV_SCR_LOAD_ANIM_FADE_ON;
+  if (dir == 0 && anim != LV_SCR_LOAD_ANIM_FADE_ON) anim = LV_SCR_LOAD_ANIM_NONE;
+  lv_anim_del_all();
+  lv_scr_load_anim(s_pages[s_cur].scr, anim, anim == LV_SCR_LOAD_ANIM_NONE ? 0 : ms, 0, false);
+  updateDots();
+}
+
+void uiNext() { uiGoto(s_cur + 1, 1); }
+void uiPrev() { uiGoto(s_cur - 1, -1); }
+void uiHome() { if (s_cur != s_home) uiGoto(s_home, s_home < s_cur ? -1 : 1); }
+int uiPageIndex() { return s_cur; }
+int uiPageCount() { return s_pages.size(); }
+String uiPageName(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].name : String(""); }
+uint16_t uiPageDuration(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].duration : 0; }
+
+// ---------------------------------------------------------------- display state
+void uiApplyBrightness() {
+  if (s_sleep) return;
+  JsonObject d = S("display");
+  int b = s_night ? (int)(d["night"]["brightness"] | 25) : (int)(d["brightness"] | 180);
+  hwSetBrightness(constrain(b, 1, 255));
+}
+
+void uiSetSleep(bool sleep) {
+  if (sleep == s_sleep) return;
+  s_sleep = sleep;
+  if (sleep) { hwSetBrightness(0); hwDisplayPower(false); LOGI("display: sleep"); }
+  else { hwDisplayPower(true); uiApplyBrightness(); lv_obj_invalidate(lv_scr_act()); LOGI("display: wake"); }
+}
+bool uiSleeping() { return s_sleep; }
+
+void uiSetNight(bool night) {
+  if (night == s_night) return;
+  s_night = night;
+  LOGI("display: night %s", night ? "on" : "off");
+  if (s_layout) buildFromDoc(s_layout);
+  uiApplyBrightness();
+}
+bool uiNight() { return s_night; }
+
+void uiApplySettings() {
+  if (s_layout) buildFromDoc(s_layout);
+  uiApplyBrightness();
+}
+
+// ---------------------------------------------------------------- init / tick
+void uiInit() {
+  String json;
+  File f = LittleFS.open(LAYOUT_FILE, "r");
+  if (f) { json = f.readString(); f.close(); }
+  String err;
+  if (json.isEmpty() || !uiValidateLayout(json, err)) {
+    if (json.length()) LOGI("layout: saved layout invalid (%s), using default", err.c_str());
+    json = DEFAULT_LAYOUT;
+  }
+  uiApplyLayout(json, false);
+  s_savedJson = json;
+  s_previewing = false;
+  uiApplyBrightness();
+}
+
+void uiTick() {
+  if (!lv_is_initialized()) return;
+  uint32_t now = millis();
+  if (s_toast && s_toastHideAt && now > s_toastHideAt) { lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN); s_toastHideAt = 0; }
+  if (s_dots && s_dotsHideAt && now > s_dotsHideAt) { lv_obj_add_flag(s_dots, LV_OBJ_FLAG_HIDDEN); s_dotsHideAt = 0; }
+  if (s_sleep || s_pages.empty()) return;
+
+  // Burn-in protection: nudge every page's canvas by a couple of pixels every 2 minutes.
+  if ((S("display")["pixel_shift"] | true) && now - s_lastShift > 120000) {
+    s_lastShift = now;
+    static const int8_t offs[][2] = {{0, 0}, {2, 0}, {2, 2}, {0, 2}, {-2, 2}, {-2, 0}, {-2, -2}, {0, -2}, {2, -2}};
+    s_shiftIdx = (s_shiftIdx + 1) % 9;
+    for (auto &pg : s_pages) lv_obj_set_pos(pg.canvas, offs[s_shiftIdx][0], offs[s_shiftIdx][1]);
+  }
+
+  time_t t = time(nullptr);
+  int sec = t % 60;
+  if (now - s_lastUpdate >= 500 || sec != s_lastSecond) {
+    s_lastUpdate = now;
+    s_lastSecond = sec;
+    for (auto &w : s_pages[s_cur].widgets) updateWidget(w, false);
+  }
+}

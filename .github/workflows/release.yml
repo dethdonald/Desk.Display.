@@ -1,0 +1,78 @@
+# Builds the firmware and publishes a GitHub Release when you push a tag like v1.2.0.
+# The display checks  releases/latest/download/version.json  and installs deskdisplay-ota.bin.
+name: Release firmware
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.2.0) - creates tag v<version>"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building $V"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DFW_VERSION=\"${{ steps.ver.outputs.version }}\"
+        run: pio run
+
+      - name: Package
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          mkdir dist
+          cp .pio/build/amoled216/firmware.bin dist/deskdisplay-ota.bin
+          cp .pio/build/amoled216/firmware.factory.bin dist/deskdisplay-factory.bin
+          cp tools/deskdisplay-statusline.py dist/
+          NOTES=$(git log -1 --pretty=%B | head -c 1500)
+          python3 - "$V" "$NOTES" "${{ github.repository }}" <<'PY'
+          import json, sys
+          v, notes, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+          json.dump({"version": v, "notes": notes.strip(),
+                     "ota_url": f"https://github.com/{repo}/releases/download/v{v}/deskdisplay-ota.bin"},
+                    open("dist/version.json", "w"), indent=2)
+          PY
+          cat dist/version.json
+          ls -la dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Desk Display v${{ steps.ver.outputs.version }}
+          make_latest: true
+          files: |
+            dist/deskdisplay-ota.bin
+            dist/deskdisplay-factory.bin
+            dist/version.json
+            dist/deskdisplay-statusline.py
+          body: |
+            **Update an existing display:** it picks this up automatically (Update tab → Updates from GitHub), or upload `deskdisplay-ota.bin` there.
+            **First-time USB flash:** write `deskdisplay-factory.bin` at address 0x0.
