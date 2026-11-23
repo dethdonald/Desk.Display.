@@ -1,6 +1,9 @@
 #include <esp_heap_caps.h>
 #include "web.h"
 String sysLastCrash();
+#include "media.h"
+static bool s_mediaUpOk = false, s_mediaUpActive = false;
+static String s_mediaUpErr;
 #include "config.h"
 #include "settings.h"
 #include "datastore.h"
@@ -232,6 +235,47 @@ void webStart() {
         if (Update.end(true)) { s_uploadOk = true; LOGI("ota: %u bytes written, rebooting", (unsigned)(index + len)); }
         else { s_uploadErr = Update.errorString(); LOGI("ota: failed: %s", s_uploadErr.c_str()); }
       }
+    });
+  // ---- media on the microSD card
+  s_server.on(AsyncURIMatcher::exact("/api/media"), HTTP_GET, [](AsyncWebServerRequest *r) {
+    JsonDocument d; mediaStatus(d.to<JsonObject>()); String s; serializeJson(d, s); sendJson(r, 200, s);
+  }).addMiddleware(&s_auth);
+  s_server.on(AsyncURIMatcher::exact("/api/media/mount"), HTTP_POST, [](AsyncWebServerRequest *r) {
+    mediaInit(); if (mediaMounted()) ok(r); else fail(r, 404, "no microSD card found");
+  }).addMiddleware(&s_auth);
+  jsonRoute("/api/media/delete", [](AsyncWebServerRequest *r, JsonVariant &j) {
+    if (mediaDelete(j["name"] | "")) ok(r); else fail(r, 404, "not found");
+  });
+  s_server.on(AsyncURIMatcher::exact("/api/media/frame"), HTTP_GET, [](AsyncWebServerRequest *r) {
+    String name = r->hasParam("name") ? r->getParam("name")->value() : String("");
+    int fr = r->hasParam("frame") ? r->getParam("frame")->value().toInt() : 0;
+    auto buf = std::make_shared<std::vector<uint8_t>>();
+    if (!mediaFrameJpeg(name, fr, *buf)) return fail(r, 404, "not found");
+    AsyncWebServerResponse *res = r->beginResponse("image/jpeg", buf->size(),
+      [buf](uint8_t *out, size_t maxLen, size_t index) -> size_t {
+        size_t n = min(maxLen, buf->size() - index);
+        memcpy(out, buf->data() + index, n);
+        return n;
+      });
+    res->addHeader("Cache-Control", r->hasParam("v") ? "max-age=86400" : "no-cache");
+    r->send(res);
+  }).addMiddleware(&s_auth);
+  s_server.on(AsyncURIMatcher::exact("/api/media/upload"), HTTP_POST,
+    [](AsyncWebServerRequest *r) {
+      if (!authOk(r)) return r->requestAuthentication(AsyncAuthType::AUTH_BASIC, "Desk Display");
+      if (s_mediaUpOk) ok(r); else fail(r, 400, s_mediaUpErr.length() ? s_mediaUpErr : String("upload failed"));
+    },
+    [](AsyncWebServerRequest *r, const String &filename, size_t index, uint8_t *data, size_t len, bool final) {
+      if (index == 0) {
+        s_mediaUpOk = false; s_mediaUpErr = "";
+        if (!authOk(r)) { s_mediaUpErr = "unauthorized"; return; }
+        String name = r->hasParam("name") ? r->getParam("name")->value() : filename;
+        if (!mediaUploadBegin(name, s_mediaUpErr)) return;
+        s_mediaUpActive = true;
+      }
+      if (!s_mediaUpActive) return;
+      if (len && !mediaUploadWrite(data, len, s_mediaUpErr)) { mediaUploadEnd(false, s_mediaUpErr); s_mediaUpActive = false; return; }
+      if (final) { s_mediaUpOk = mediaUploadEnd(true, s_mediaUpErr); s_mediaUpActive = false; }
     });
   // ... or pull one from a URL (GitHub release, your server, ...)
   jsonRoute("/api/update/url", [](AsyncWebServerRequest *r, JsonVariant &j) {

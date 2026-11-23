@@ -18,6 +18,7 @@
 #include "web.h"
 #include "sound.h"
 #include "bambu.h"
+#include "media.h"
 #include <esp_heap_caps.h>
 #include <mbedtls/platform.h>
 
@@ -315,6 +316,7 @@ void setup() {
   sysKeysTick();
   fetcherStart();
   bambuStart();
+  mediaInit();
   bootStep("web", false);
   webApplySettings();
   webSnapshotLayout();

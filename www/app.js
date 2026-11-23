@@ -257,6 +257,15 @@ function renderWidget(p, theme, data) {
     const side = Math.min(W, H) - 2 * pad - 8;
     box.append(h("div", { style: { width: side + "px", height: side + "px", background: "#fff", padding: "4px" } },
       h("div", { style: { width: "100%", height: "100%", background: "repeating-conic-gradient(#000 0 25%, #fff 0 50%) 0 0/16px 16px" } })));
+  } else if (t === "media") {
+    if (p.file) {
+      const mf = ((Media.list && Media.list.files) || []).find(f => f.name === p.file);
+      const im = h("img", { src: mediaThumbUrl(p.file, mf), alt: "" });
+      Object.assign(im.style, { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", maxWidth: "none" });
+      im.onerror = () => im.replaceWith(h("div", { class: "small", style: { color: theme.muted, textAlign: "center" } }, "Not on the card: " + p.file));
+      box.style.overflow = "hidden";
+      box.append(im);
+    } else box.append(h("div", { class: "small", style: { color: theme.muted, textAlign: "center", padding: "8px" } }, "Picture / video — choose a file"));
   } else if (t === "box") {
     // decoration
   } else {
@@ -351,6 +360,196 @@ async function saveSettings(patch, msg = "Saved") {
   catch (e) { toast("Save failed: " + e.message, true); }
 }
 
+// ============================================================ MEDIA (microSD pictures, GIFs, video loops)
+// Everything is converted in the browser into a "DDA" file: JPEG frames sized for the display plus
+// a small index (see src/media.h). The display then only has to decode JPEG.
+const Media = { list: null, busy: false };
+async function mediaRefresh() {
+  try { Media.list = await api("/api/media"); } catch (e) { Media.list = { sd: { mounted: false }, files: [], error: e.message }; }
+  return Media.list;
+}
+function mediaFileField(value, onchange) {
+  const files = (Media.list && Media.list.files) || [];
+  const s = sel([["", files.length ? "Choose a file…" : "No files yet"], ...files.map(f => [f.name, `${f.name} (${f.w}×${f.h}${f.frames > 1 ? ", " + f.frames + " frames" : ""})`])], value, onchange);
+  if (!Media.list) mediaRefresh().then(() => { if (S.tab === "layout") drawEditor(); });
+  return h("div", { class: "stack" }, s, h("span", { class: "small muted" }, "Add files in the ", h("a", { href: "#media", onclick: e => { e.preventDefault(); showTab("media"); } }, "Media tab"), ". Tip: a full-screen file fits a 12 × 12 widget."));
+}
+const mediaThumbUrl = (name, f) => "/api/media/frame?name=" + encodeURIComponent(name) + (f ? "&v=" + f.size : "");
+const fmtBytes = n => n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + " GB" : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+
+function ddaDims(srcW, srcH, size, fit) {
+  if (fit === "cover") return [size, size];
+  const k = Math.min(size / srcW, size / srcH);
+  const r16 = v => Math.max(16, Math.min(size, Math.round(v * k / 16) * 16));
+  return [r16(srcW), r16(srcH)];
+}
+function drawFit(ctx, src, sw, sh, W, H, fit) {
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  const k = fit === "cover" ? Math.max(W / sw, H / sh) : Math.min(W / sw, H / sh);
+  const dw = sw * k, dh = sh * k;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+async function encodeJpeg(canvas, q) {
+  if (canvas.convertToBlob) return new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: q })).arrayBuffer());
+  return new Uint8Array(await (await new Promise(r => canvas.toBlob(r, "image/jpeg", q))).arrayBuffer());
+}
+function buildDda(W, H, frames) {           // frames: [{jpg: Uint8Array, delay}]
+  const head = 12 + frames.length * 12;
+  const total = head + frames.reduce((a, f) => a + f.jpg.length, 0);
+  const out = new Uint8Array(total), dv = new DataView(out.buffer);
+  out.set([68, 68, 65, 49], 0);              // "DDA1"
+  dv.setUint16(4, W, true); dv.setUint16(6, H, true); dv.setUint16(8, frames.length, true); dv.setUint16(10, 1, true);
+  let off = head;
+  frames.forEach((f, i) => {
+    dv.setUint32(12 + i * 12, off, true); dv.setUint32(16 + i * 12, f.jpg.length, true); dv.setUint16(20 + i * 12, f.delay, true);
+    out.set(f.jpg, off); off += f.jpg.length;
+  });
+  return new Blob([out], { type: "application/octet-stream" });
+}
+async function convertMedia(file, o, progress) {
+  const mkCanvas = (W, H) => { const c = document.createElement("canvas"); c.width = W; c.height = H; return c; };
+  const frames = [];
+  let W, H;
+  const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|m4v|mkv)$/i.test(file.name);
+  const animated = /gif|webp|png|apng/i.test(file.type) && "ImageDecoder" in window;
+  if (isVideo) {
+    const v = h("video", { muted: true, playsInline: true, preload: "auto" });
+    v.src = URL.createObjectURL(file);
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("This browser can't play that video. Try an MP4 (H.264) file.")); });
+    W = ddaDims(v.videoWidth, v.videoHeight, o.size, o.fit)[0]; H = ddaDims(v.videoWidth, v.videoHeight, o.size, o.fit)[1];
+    const c = mkCanvas(W, H), ctx = c.getContext("2d");
+    const dur = Math.min(v.duration || 0, o.maxSec), step = 1 / o.fps, n = Math.max(1, Math.floor(dur * o.fps));
+    for (let i = 0; i < n; i++) {
+      v.currentTime = i * step;
+      await new Promise(r => { v.onseeked = r; });
+      drawFit(ctx, v, v.videoWidth, v.videoHeight, W, H, o.fit);
+      frames.push({ jpg: await encodeJpeg(c, o.q), delay: Math.round(1000 / o.fps) });
+      progress(`Converting video: frame ${i + 1} of ${n}`, (i + 1) / n);
+    }
+    URL.revokeObjectURL(v.src);
+  } else if (animated) {
+    const dec = new ImageDecoder({ data: await file.arrayBuffer(), type: file.type });
+    await dec.tracks.ready;
+    const n = Math.min(dec.tracks.selectedTrack.frameCount || 1, 1500);
+    for (let i = 0; i < n; i++) {
+      const { image } = await dec.decode({ frameIndex: i });
+      if (!W) [W, H] = ddaDims(image.displayWidth, image.displayHeight, o.size, o.fit);
+      const c = mkCanvas(W, H);
+      drawFit(c.getContext("2d"), image, image.displayWidth, image.displayHeight, W, H, o.fit);
+      const d = image.duration ? Math.round(image.duration / 1000) : 100;
+      image.close();
+      frames.push({ jpg: await encodeJpeg(c, o.q), delay: d >= 20 ? d : 100 });
+      progress(`Converting animation: frame ${i + 1} of ${n}`, (i + 1) / n);
+    }
+  } else {
+    const bmp = await createImageBitmap(file);
+    [W, H] = ddaDims(bmp.width, bmp.height, o.size, o.fit);
+    const c = mkCanvas(W, H);
+    drawFit(c.getContext("2d"), bmp, bmp.width, bmp.height, W, H, o.fit);
+    frames.push({ jpg: await encodeJpeg(c, o.q), delay: 1000 });
+    progress("Converted", 1);
+  }
+  return { blob: buildDda(W, H, frames), W, H, n: frames.length };
+}
+function uploadMedia(blob, name, progress) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/media/upload?name=" + encodeURIComponent(name));
+    x.upload.onprogress = e => e.lengthComputable && progress(`Uploading ${fmtBytes(e.loaded)} of ${fmtBytes(e.total)}`, e.loaded / e.total);
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch { } x.status < 300 ? res(d) : rej(new Error(d.error || "HTTP " + x.status)); };
+    x.onerror = () => rej(new Error("network error"));
+    const fd = new FormData(); fd.append("file", blob, name + ".dda"); x.send(fd);
+  });
+}
+async function mediaNewPage(f) {
+  const cells = Math.max(1, Math.min(12, Math.round(Math.max(f.w, f.h) / 40)));
+  const pg = { name: f.name.slice(0, 24), enabled: true, duration: 15, bg: "#000000",
+    widgets: [{ type: "media", x: Math.floor((12 - cells) / 2), y: Math.floor((12 - cells) / 2), w: cells, h: cells, file: f.name }] };
+  if (Editor.layout && Editor.dirty) {
+    Editor.snapshot(); Editor.layout.pages.push(pg); Editor.page = Editor.layout.pages.length - 1; Editor.sel = -1;
+    showTab("layout"); toast("Page added — press Save to display"); return;
+  }
+  try {
+    const L = await api("/api/layout"); L.pages.push(pg);
+    await api("/api/layout", { body: L });
+    S.layout = L; if (Editor.layout) Editor.load(L);
+    toast(`Added the page "${pg.name}" to the display`);
+  } catch (e) { toast("Couldn't add the page: " + e.message, true); }
+}
+TABS.media = async () => {
+  const el = $("#tab-media");
+  if (!Media.list) el.replaceChildren(h("div", { class: "card" }, "Loading…"));
+  const L = await mediaRefresh();
+  const sd = L.sd || {};
+  const card = h("div", { class: "card stack" }, h("h2", {}, "microSD card"),
+    sd.mounted
+      ? h("div", { class: "stack" },
+          h("div", {}, `${sd.type} · ${fmtBytes(sd.used || 0)} used of ${fmtBytes(sd.total || 0)}`),
+          h("div", { class: "mmeter" }, h("div", { style: { width: Math.min(100, 100 * (sd.used || 0) / (sd.total || 1)) + "%" } })))
+      : h("div", { class: "stack" },
+          h("p", { style: { margin: 0 } }, "No card found. Insert a microSD card formatted as FAT32 (most cards up to 32 GB already are), then press Check again."),
+          h("div", { class: "row" }, h("button", { class: "btn sm", onclick: async () => { try { await api("/api/media/mount", { method: "POST" }); toast("Card found"); } catch (e) { toast(e.message, true); } TABS.media(); } }, "Check again"))));
+
+  // upload
+  const o = Object.assign({ size: 480, fit: "cover", fps: 12, maxSec: 20, q: 0.8 }, Media.opts || {});
+  Media.opts = o;
+  const fileIn = h("input", { type: "file", accept: "image/*,video/*,.gif,.mp4,.webm,.mov", style: { display: "none" } });
+  const nameIn = inp("text", "", () => { }, { placeholder: "name on the card" });
+  const info = h("div", { class: "small muted" }, "JPG, PNG, GIF, WebP or a video (MP4/WebM/MOV). It's converted here in your browser, so big files are fine.");
+  const bar = h("div", { class: "mmeter", style: { display: "none" } }, h("div", { style: { width: "0%" } }));
+  const progress = (msg, frac) => { info.textContent = msg; bar.style.display = ""; bar.firstChild.style.width = Math.round(frac * 100) + "%"; };
+  let picked = null;
+  const drop = h("div", { class: "dropzone", onclick: () => fileIn.click() }, h("b", {}, "Drop a file here"), h("span", { class: "small muted" }, "or click to choose"));
+  const pick = f => {
+    picked = f; drop.querySelector("b").textContent = f.name;
+    nameIn.value = f.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9 _.-]/g, "").slice(0, 40);
+    const vid = f.type.startsWith("video/"); vidOpts.style.display = vid ? "" : "none";
+    go.disabled = !sd.mounted;
+  };
+  fileIn.onchange = () => fileIn.files[0] && pick(fileIn.files[0]);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && pick(e.dataTransfer.files[0]); };
+  const vidOpts = h("div", { class: "two", style: { display: "none" } },
+    field("Frames per second", sel([[8, "8"], [10, "10"], [12, "12 (recommended)"], [15, "15"], [20, "20 (may stutter)"]], o.fps, v => o.fps = +v)),
+    field("Use the first", sel([[5, "5 seconds"], [10, "10 seconds"], [20, "20 seconds"], [30, "30 seconds"], [60, "1 minute"], [120, "2 minutes"]], o.maxSec, v => o.maxSec = +v)));
+  const go = h("button", { class: "btn primary", disabled: true, onclick: async () => {
+    if (!picked || Media.busy) return;
+    const name = nameIn.value.trim();
+    if (!name) return toast("Give it a name", true);
+    Media.busy = true; go.disabled = true;
+    try {
+      const r = await convertMedia(picked, o, progress);
+      await uploadMedia(r.blob, name, progress);
+      info.textContent = `Saved "${name}" (${r.W}×${r.H}, ${r.n} frame${r.n > 1 ? "s" : ""}, ${fmtBytes(r.blob.size)}).`;
+      toast("Saved to the card");
+      Media.busy = false; TABS.media();
+    } catch (e) { info.textContent = "Failed: " + e.message; toast(e.message, true); Media.busy = false; go.disabled = false; }
+  } }, "Convert & upload");
+  const up = h("div", { class: "card stack" }, h("h2", {}, "Add a picture, GIF or video"), fileIn, drop,
+    h("div", { class: "two" },
+      field("Size", sel([[480, "Full screen (480 × 480)"], [320, "Medium (320 × 320)"], [240, "Small (240 × 240)"], [160, "Tiny (160 × 160)"]], o.size, v => o.size = +v)),
+      field("Fit", sel([["cover", "Fill the square (crop edges)"], ["contain", "Show the whole picture"]], o.fit, v => o.fit = v))),
+    vidOpts,
+    field("Quality", sel([[0.65, "Smaller file"], [0.8, "Good (recommended)"], [0.92, "Best (slower video)"]], o.q, v => o.q = +v)),
+    field("Name", nameIn), h("div", { class: "row" }, go), bar, info);
+
+  // files
+  const files = L.files || [];
+  const list = h("div", { class: "card stack" }, h("h2", {}, `On the card (${files.length})`),
+    files.length ? h("div", { class: "mgrid" }, ...files.map(f => h("div", { class: "mtile" },
+      h("div", { class: "mthumb" }, f.bad ? h("span", { class: "small muted" }, "unreadable") : h("img", { src: mediaThumbUrl(f.name, f), loading: "lazy", alt: "" })),
+      h("b", {}, f.name),
+      h("span", { class: "small muted" }, `${f.w}×${f.h} · ${f.frames > 1 ? f.frames + " frames, " + (f.seconds || 0).toFixed(1) + " s" : "picture"} · ${fmtBytes(f.size)}`),
+      h("div", { class: "row" },
+        h("button", { class: "btn sm", onclick: () => mediaNewPage(f), title: "Add a page that shows this" }, "New page"),
+        h("button", { class: "btn sm danger", onclick: async () => { if (!confirm(`Delete "${f.name}" from the card?`)) return; try { await api("/api/media/delete", { body: { name: f.name } }); TABS.media(); } catch (e) { toast(e.message, true); } } }, "Delete")))))
+    : h("p", { class: "muted", style: { margin: 0 } }, sd.mounted ? "Nothing here yet." : "—"),
+    h("p", { class: "small muted", style: { margin: 0 } }, "To show a file: press New page, or add a “Picture / video” widget to any page in Layout."));
+  el.replaceChildren(h("div", { class: "grid2" }, h("div", { class: "stack" }, card, up), list));
+};
+
 // ============================================================ DASHBOARD
 TABS.dash = () => {
   const el = $("#tab-dash");
@@ -428,6 +627,7 @@ const WIDGETS = {
   icon:     { label: "Icon", def: { w: 2, h: 2, glyph: "", size: 64, color: "fg" } },
   box:      { label: "Box / panel", def: { w: 6, h: 3, bg: "track", radius: 16 } },
   qr:       { label: "Settings QR", def: { w: 4, h: 4 } },
+  media:    { label: "Picture / video", def: { x: 0, y: 0, w: 12, h: 12, file: "" } },
 };
 const COLOR_OPTS = [["fg", "Text"], ["muted", "Muted"], ["accent", "Accent"], ["ok", "OK"], ["warn", "Warning"], ["bad", "Alert"], ["track", "Track"], ["bg", "Background"], ["custom", "Custom…"]];
 const KEY_HINTS = {
@@ -459,7 +659,7 @@ function propSchema(t) {
     weather: [["icon_size", "Icon size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], size, ["style", "Arrangement", [["row", "Side by side"], ["stack", "Stacked"]]], ["show_desc", "Show conditions", "bool"], ["desc_size", "Conditions size", "font"], ["show_unit", "Show °F/°C letter", "bool"], color, ["icon_color", "Icon color", "color"]],
     forecast: [["mode", "Mode", [["daily", "Daily"], ["hourly", "Hourly"]]], ["count", "Columns", "num"], ["step", "Hours between (hourly)", "num"], ["icon_size", "Icon size", [[32, "Small"], [64, "Medium"]]], size, color, ["show_wind", "Show wind speed (daily)", "bool"], ["wind_size", "Wind text size", "font"]],
     icon: [["glyph", "Icon", "glyph"], ["key", "…or from data key", "key"], ["size", "Size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], color],
-    box: [], qr: [],
+    box: [], qr: [], media: [["file", "File on the microSD card", "mediafile"]],
   };
   return S_[t] || [];
 }
@@ -706,6 +906,7 @@ function propsPanel() {
     else if (kind === "font") input = sel(FONT_SIZES.map(s => [s, s + " px" + (s >= 96 ? " (digits only)" : "")]), nearestFont(w[k] ?? (k === "size" ? 24 : 16)), v => { snap(); change(k, +v); });
     else if (kind === "color") input = colorField(w[k] || "", v => { snap(); change(k, v); }, k === "bg" || k === "ampm_color" || k === "icon_color");
     else if (kind === "key") input = keyField(w[k] || "", v => change(k, v));
+    else if (kind === "mediafile") input = mediaFileField(w[k] || "", v => { snap(); change(k, v); });
     else if (kind === "glyph") input = sel(Object.entries(WX_GLYPHS).map(([n, g]) => [g, n]), w[k] || "", v => { snap(); change(k, v); });
     else if (kind === "datefmt") { const t = inp("text", w[k] || "%A, %b %e", v => change(k, v), { onfocus: snap }); input = h("div", { class: "stack" }, t, sel([["", "Presets…"], ...DATE_PRESETS], "", v => { if (v) { snap(); t.value = v; change(k, v); } }), h("span", { class: "small muted" }, "%A weekday · %a short · %B month · %b short · %e day · %Y year · %H:%M time")); }
     else if (kind === "tmpl" || kind === "tmpl1") { const t = kind === "tmpl" ? h("textarea", { onfocus: snap }) : h("input", { type: "text", onfocus: snap }); t.value = w[k] ?? ""; t.oninput = () => change(k, t.value); input = h("div", { class: "stack" }, t, tmplHelp(t)); }

@@ -7,6 +7,7 @@
 #include "hw.h"
 #include "logbuf.h"
 #include "sound.h"
+#include "media.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <vector>
@@ -804,6 +805,15 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
     lv_obj_set_style_border_color(w.d, lv_color_white(), 0);
     lv_obj_set_style_border_width(w.d, 4, 0);
     lv_obj_center(w.d);
+  } else if (w.type == "media") {
+    w.d = lv_img_create(w.box);                         // frames are set by media.cpp
+    lv_obj_center(w.d);
+    w.b = mkLabel(w.box, 16, s_theme.muted);
+    lv_obj_set_width(w.b, W - 2 * pad - 8);
+    lv_obj_set_style_text_align(w.b, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(w.b, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(w.b, "");
+    lv_obj_center(w.b);
   } else if (w.type == "box") {
     // decoration only (bg/border/radius already applied)
   } else {
@@ -1400,6 +1410,21 @@ void uiApplySettings() {
   uiApplyBrightness();
 }
 
+// ---------------------------------------------------------------- media
+// Only the media widget on the visible page plays; everything else is stopped.
+static void mediaSync() {
+  Widget *mw = nullptr;
+  if (!s_sleep && !s_tScr && s_cur >= 0 && s_cur < (int)s_pages.size())
+    for (auto &w : s_pages[s_cur].widgets) if (w.type == "media") { mw = &w; break; }
+  if (!mw) { mediaStop(); return; }
+  String file = mw->p["file"] | "";
+  if (file.isEmpty()) { mediaStop(); setText(mw->b, mw->cache[0], "Choose a picture or video for this widget in Layout"); return; }
+  mediaPlay(mw->d, file, 0, 0);
+  setText(mw->b, mw->cache[0], mediaError());
+  mediaPause(s_sleep);
+  mediaTick();
+}
+
 // ---------------------------------------------------------------- init / tick
 void uiInit() {
   String json;
@@ -1438,5 +1463,6 @@ void uiTick() {
     s_lastSecond = sec;
     updatePage(s_cur);
   }
+  mediaSync();
   snapMaintain(now);
 }

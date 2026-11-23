@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import struct, email, urllib.parse
 """Mock of the Desk Display HTTP API for working on the web UI without hardware.
 
     python3 tools/mock_device.py [port]      then open http://localhost:8080/
@@ -102,6 +103,21 @@ class H(BaseHTTPRequestHandler):
                           "pitch": random.uniform(-3, 3), "angle": 2.1, "motion_g": 0.01, "imu": True},
                 "time": int(time.time()), "time_valid": True, "display": {"fps": 31.5, "mbps": 13.2, "bus_busy_pct": 64}, "sound": "ready", "partition": "app0", "ota_state": "valid",
                 "has_admin_pass": bool(SETTINGS["admin"]["pass"]), "api_token": SETTINGS["api"]["token"]})
+        if p == "/api/media":
+            files = []
+            for nm, data in MEDIA.items():
+                w, hh, n = struct.unpack_from("<HHH", data, 4)
+                delays = [struct.unpack_from("<IIH", data, 12 + i * 12)[2] for i in range(n)]
+                files.append({"name": nm, "size": len(data), "w": w, "h": hh, "frames": n, "seconds": sum(delays) / 1000})
+            return self.send(200, {"sd": {"mounted": True, "type": "SD (1-bit)", "total": 31_900_000_000, "used": 1_200_000_000 + sum(map(len, MEDIA.values()))}, "files": files})
+        if p == "/api/media/frame":
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            data = MEDIA.get(q.get("name", [""])[0])
+            if not data:
+                return self.send(404, {"ok": False, "error": "not found"})
+            fr = int(q.get("frame", ["0"])[0])
+            off, size = struct.unpack_from("<II", data, 12 + fr * 12)
+            return self.send(200, data[off:off + size], "image/jpeg")
         if p == "/api/settings":
             return self.send(200, masked())
         if p == "/api/layout":
@@ -153,6 +169,14 @@ class H(BaseHTTPRequestHandler):
                 STATE["night"] = not STATE["night"]
         elif p == "/api/update/install-latest":
             STATE["upd"] = "up to date (v1.3.0 is the newest release)"
+        elif p == "/api/media/upload":
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            msg = email.message_from_bytes(b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + b)
+            for part in msg.walk():
+                if part.get_filename():
+                    MEDIA[q.get("name", ["x"])[0]] = part.get_payload(decode=True)
+        elif p == "/api/media/delete":
+            MEDIA.pop(b.get("name"), None)
         elif p == "/api/usage":
             rl = b.get("rate_limits", {})
             for w, v in rl.items():
@@ -162,6 +186,7 @@ class H(BaseHTTPRequestHandler):
         self.send(200, {"ok": True})
 
 
+MEDIA = {}
 START = time.time()
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080

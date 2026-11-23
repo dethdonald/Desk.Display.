@@ -3,7 +3,7 @@
 
 #define FW_NAME     "DeskDisplay"
 #ifndef FW_VERSION
-#define FW_VERSION  "1.7.1"          // CI overrides this from the git tag
+#define FW_VERSION  "1.8.0"          // CI overrides this from the git tag
 #endif
 
 // Display (CO5300, QSPI)
