@@ -532,6 +532,8 @@ struct Page {
   String name;
   uint16_t duration = 0;
   bool stay = false;                            // don't return home from this page when idle
+  lv_img_dsc_t *snap = nullptr;                 // cached picture of the page, used by the slide transition
+  bool snapOk = false;                          // snap still matches what the page shows
 };
 
 static JsonDocument *s_layout = nullptr;        // backing doc for the live pages
@@ -600,9 +602,11 @@ static lv_obj_t *mkLabel(lv_obj_t *parent, int size, lv_color_t color) {
   return l;
 }
 
+static uint32_t s_visualChanges = 0;            // bumped whenever a widget's look changes
 static void setText(lv_obj_t *l, String &cache, const String &txt) {
   if (!l || cache == txt) return;
   cache = txt;
+  s_visualChanges++;
   lv_label_set_text(l, txt.c_str());
 }
 
@@ -846,7 +850,7 @@ static void updateWidget(Widget &w, bool force) {
     double v; bool has = dsGetNum(keyOf(p), v);
     if (strcmp(p["color_mode"] | "fixed", "threshold") == 0) {
       int32_t q = has ? (int32_t)(v * 10) : -1;
-      if (q != w.lastVal) { w.lastVal = q; lv_obj_set_style_text_color(w.a, valueColor(p, v, has), 0); }
+      if (q != w.lastVal) { w.lastVal = q; s_visualChanges++; lv_obj_set_style_text_color(w.a, valueColor(p, v, has), 0); }
     }
   } else if (w.type == "bar" || w.type == "ring") {
     double v = 0; bool has = dsGetNum(keyOf(p), v);
@@ -856,6 +860,7 @@ static void updateWidget(Widget &w, bool force) {
     bool changed = q != w.lastVal;
     if (changed) {
       w.lastVal = q;
+      s_visualChanges++;
       lv_color_t col = valueColor(p, v, has);
       if (w.type == "bar") {
         lv_bar_set_value(w.d, max((int32_t)0, q), LV_ANIM_OFF);
@@ -874,6 +879,7 @@ static void updateWidget(Widget &w, bool force) {
       setText(w.b, w.cache[1], has ? dsRender(p["sub"] | "") : String((const char *)(p["empty"] | "No data yet")));
       if (w.e && (w.cache[3] != vt || changed || force)) {
         w.cache[3] = vt;
+        s_visualChanges++;
         lv_label_set_text(w.e, vt.c_str());
         lv_point_t sz;
         lv_txt_get_size(&sz, vt.c_str(), fontFor(p["value_size"] | (int)(p["size"] | 24)), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
@@ -898,9 +904,10 @@ static void updateWidget(Widget &w, bool force) {
       if (w.e) {
         String defBadge = "{" + key + ":0}%";
         String bt = dsRender(p["badge"].is<const char *>() ? (const char *)p["badge"] : defBadge.c_str());
-        if (!has) lv_obj_add_flag(w.e, LV_OBJ_FLAG_HIDDEN);
+        if (!has) { if (!lv_obj_has_flag(w.e, LV_OBJ_FLAG_HIDDEN)) { s_visualChanges++; lv_obj_add_flag(w.e, LV_OBJ_FLAG_HIDDEN); } }
         else if (bt != w.cache[3] || changed || force) {
           w.cache[3] = bt;
+          s_visualChanges++;
           lv_label_set_text(w.e, bt.c_str());
           lv_obj_set_style_bg_color(w.e, valueColor(p, v, has), 0);
           lv_obj_clear_flag(w.e, LV_OBJ_FLAG_HIDDEN);
@@ -943,6 +950,7 @@ static void updateWidget(Widget &w, bool force) {
     }
     if (agg != w.cache[0]) {
       w.cache[0] = agg;
+      s_visualChanges++;
       for (size_t i = 0; i < txt.size(); i++) lv_label_set_text(w.cols[i], txt[i].c_str());
     }
   } else if (w.type == "icon") {
@@ -968,8 +976,19 @@ static void screenEventCb(lv_event_t *e) {
   inputTouch(lv_event_get_code(e), pt);
 }
 
+// Bring a page's widgets up to date; drop its cached picture if anything visible changed.
+static void updatePage(int i, bool force = false) {
+  if (i < 0 || i >= (int)s_pages.size()) return;
+  uint32_t before = s_visualChanges;
+  for (auto &w : s_pages[i].widgets) updateWidget(w, force);
+  if (force || s_visualChanges != before) s_pages[i].snapOk = false;
+}
+static void snapFree(Page &pg) {
+  if (pg.snap) { lv_snapshot_free(pg.snap); pg.snap = nullptr; }
+  pg.snapOk = false;
+}
 static void destroyPages(std::vector<Page> &pages) {
-  for (auto &pg : pages) if (pg.scr) lv_obj_del(pg.scr);
+  for (auto &pg : pages) { snapFree(pg); if (pg.scr) lv_obj_del(pg.scr); }
   pages.clear();
 }
 
@@ -1023,7 +1042,7 @@ static bool buildFromDoc(JsonDocument *doc) {
   s_pages = std::move(pages);
   s_home = constrain((int)(root["home"] | 0), 0, (int)s_pages.size() - 1);
   s_cur = (keep >= 0 && keep < (int)s_pages.size()) ? keep : s_home;
-  for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
+  updatePage(s_cur, true);
   lv_scr_load(s_pages[s_cur].scr);
   destroyPages(old);
   updateDots();
@@ -1157,11 +1176,29 @@ void uiToast(const String &msg, uint32_t ms) {
 
 // ---------------------------------------------------------------- navigation
 // ---------------------------------------------------------------- transitions
-// Slide: both pages are rendered once into images, then only the images move (cheap per frame).
+// Slide: both pages are drawn once into pictures, then only the pictures move (cheap per frame).
+// Pictures of the current page and its neighbours are kept and refreshed in the background while
+// nobody is touching the display, so most swipes start instantly instead of rendering two pages.
 static lv_obj_t *s_tScr = nullptr;
-static lv_img_dsc_t *s_snapA = nullptr, *s_snapB = nullptr;
 static lv_obj_t *s_imgA = nullptr, *s_imgB = nullptr;
 static int s_tTarget = -1;
+
+static bool snapEnsure(int i) {
+  Page &pg = s_pages[i];
+  if (pg.snap && pg.snapOk) return true;
+  lv_obj_update_layout(pg.scr);
+  if (pg.snap) {
+    uint32_t need = lv_snapshot_buf_size_needed(pg.scr, LV_IMG_CF_TRUE_COLOR);
+    if (pg.snap->data_size >= need &&
+        lv_snapshot_take_to_buf(pg.scr, LV_IMG_CF_TRUE_COLOR, pg.snap, (void *)pg.snap->data, pg.snap->data_size) == LV_RES_OK) {
+      pg.snapOk = true; return true;
+    }
+    snapFree(pg);
+  }
+  pg.snap = lv_snapshot_take(pg.scr, LV_IMG_CF_TRUE_COLOR);
+  pg.snapOk = pg.snap != nullptr;
+  return pg.snapOk;
+}
 
 static void transFinishNow() {
   if (!s_tScr) return;
@@ -1170,32 +1207,21 @@ static void transFinishNow() {
   if (s_tTarget >= 0 && s_tTarget < (int)s_pages.size()) lv_scr_load(s_pages[s_tTarget].scr);
   lv_obj_del(s_tScr);
   s_tScr = s_imgA = s_imgB = nullptr;
-  if (s_snapA) { lv_snapshot_free(s_snapA); s_snapA = nullptr; }
-  if (s_snapB) { lv_snapshot_free(s_snapB); s_snapB = nullptr; }
   s_tTarget = -1;
 }
 
 static void slideXCb(void *obj, int32_t v) { lv_obj_set_x((lv_obj_t *)obj, v); }
 static void slideReadyCb(lv_anim_t *) { transFinishNow(); }
 
-static bool slideTo(int target, int dir, int ms) {
-  lv_obj_t *from = lv_scr_act();
-  lv_obj_t *to = s_pages[target].scr;
-  lv_obj_update_layout(to);
-  s_snapA = lv_snapshot_take(from, LV_IMG_CF_TRUE_COLOR);
-  s_snapB = lv_snapshot_take(to, LV_IMG_CF_TRUE_COLOR);
-  if (!s_snapA || !s_snapB) {                       // out of memory: just switch
-    if (s_snapA) lv_snapshot_free(s_snapA);
-    if (s_snapB) lv_snapshot_free(s_snapB);
-    s_snapA = s_snapB = nullptr;
-    return false;
-  }
+static bool slideTo(int from, int target, int dir, int ms) {
+  if (from < 0 || from >= (int)s_pages.size() || lv_scr_act() != s_pages[from].scr) return false;
+  if (!snapEnsure(from) || !snapEnsure(target)) return false;   // out of memory: just switch
   s_tTarget = target;
   s_tScr = lv_obj_create(nullptr);
   lv_obj_clear_flag(s_tScr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(s_tScr, s_theme.bg, 0);
-  s_imgA = lv_img_create(s_tScr); lv_img_set_src(s_imgA, s_snapA); lv_obj_set_pos(s_imgA, 0, 0);
-  s_imgB = lv_img_create(s_tScr); lv_img_set_src(s_imgB, s_snapB); lv_obj_set_pos(s_imgB, dir * LCD_W, 0);
+  s_imgA = lv_img_create(s_tScr); lv_img_set_src(s_imgA, s_pages[from].snap); lv_obj_set_pos(s_imgA, 0, 0);
+  s_imgB = lv_img_create(s_tScr); lv_img_set_src(s_imgB, s_pages[target].snap); lv_obj_set_pos(s_imgB, dir * LCD_W, 0);
   lv_scr_load(s_tScr);
   lv_anim_t a;
   lv_anim_init(&a);
@@ -1207,6 +1233,29 @@ static bool slideTo(int target, int dir, int ms) {
   lv_anim_set_ready_cb(&a, slideReadyCb);
   lv_anim_start(&a);
   return true;
+}
+
+// Background upkeep of the cached pictures: only while idle and nothing is animating, at most one
+// page drawn per pass.
+static uint32_t s_snapWorkAt = 0, s_neighbourCheckAt = 0;
+static void snapMaintain(uint32_t now) {
+  int n = s_pages.size();
+  if (n < 2 || s_tScr || s_dipping || s_sleep) return;
+  if (strcmp(S("controls")["transition"] | "slide", "slide") != 0) {
+    for (auto &pg : s_pages) if (pg.snap) snapFree(pg);
+    return;
+  }
+  if (lv_disp_get_inactive_time(nullptr) < 1500 || now - s_snapWorkAt < 400) return;
+  int want[3] = {s_cur, (s_cur + 1) % n, (s_cur + n - 1) % n};
+  for (int i = 0; i < n; i++) if (i != want[0] && i != want[1] && i != want[2] && s_pages[i].snap) snapFree(s_pages[i]);
+  if (now - s_neighbourCheckAt > 2000) { s_neighbourCheckAt = now; updatePage(want[1]); updatePage(want[2]); }
+  for (int k = 0; k < 3; k++) {
+    Page &pg = s_pages[want[k]];
+    if (pg.snap && pg.snapOk) continue;
+    snapEnsure(want[k]);
+    s_snapWorkAt = millis();
+    return;
+  }
 }
 
 // Dip: fade the panel's own brightness down, do something while dark, fade back up.
@@ -1256,13 +1305,13 @@ void uiGoto(int index, int dir) {
   if (index != s_cur) soundPlay(SND_PAGE);
   int from = s_cur;
   s_cur = index;
-  for (auto &w : s_pages[s_cur].widgets) updateWidget(w, true);
+  updatePage(s_cur);
   const char *tr = S("controls")["transition"] | "slide";
   int ms = S("controls")["transition_ms"] | 300;
   if (dir == 0) dir = index > from ? 1 : -1;
   bool animate = !s_sleep && ms > 0 && index != from;
   if (animate && !strcmp(tr, "slide")) {
-    if (!slideTo(s_cur, dir, ms)) lv_scr_load(s_pages[s_cur].scr);
+    if (!slideTo(from, s_cur, dir, ms)) lv_scr_load(s_pages[s_cur].scr);
   } else if (animate && !strcmp(tr, "dim")) {
     dip(DIP_PAGE, s_cur, ms);
   } else if (animate && !strcmp(tr, "fade")) {
@@ -1379,7 +1428,7 @@ void uiTick() {
     s_lastShift = now;
     static const int8_t offs[][2] = {{0, 0}, {2, 0}, {2, 2}, {0, 2}, {-2, 2}, {-2, 0}, {-2, -2}, {0, -2}, {2, -2}};
     s_shiftIdx = (s_shiftIdx + 1) % 9;
-    for (auto &pg : s_pages) lv_obj_set_pos(pg.canvas, offs[s_shiftIdx][0], offs[s_shiftIdx][1]);
+    for (auto &pg : s_pages) { lv_obj_set_pos(pg.canvas, offs[s_shiftIdx][0], offs[s_shiftIdx][1]); pg.snapOk = false; }
   }
 
   time_t t = time(nullptr);
@@ -1387,6 +1436,7 @@ void uiTick() {
   if (now - s_lastUpdate >= 500 || sec != s_lastSecond) {
     s_lastUpdate = now;
     s_lastSecond = sec;
-    for (auto &w : s_pages[s_cur].widgets) updateWidget(w, false);
+    updatePage(s_cur);
   }
+  snapMaintain(now);
 }

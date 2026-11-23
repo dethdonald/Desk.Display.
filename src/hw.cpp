@@ -39,6 +39,8 @@ static void rounderCb(lv_disp_drv_t *, lv_area_t *a) {
 struct FlushJob { lv_disp_drv_t *drv; lv_area_t area; lv_color_t *px; };
 static QueueHandle_t s_flushQ = nullptr;
 static SemaphoreHandle_t s_busMtx = nullptr;          // one user of the QSPI bus at a time
+static String s_drawBufInfo;
+String hwDrawBufInfo() { return s_drawBufInfo; }
 static volatile uint32_t s_pxSent = 0, s_frames = 0, s_busyUs = 0;
 static volatile float s_fps = 0, s_mbps = 0, s_busyPct = 0;
 static uint32_t s_statT0 = 0;
@@ -201,14 +203,32 @@ bool hwInit() {
   if (i2cProbe(0x51)) s_hasRtc = s_rtc.begin(Wire, I2C_SDA, I2C_SCL);
   LOGI("hw: RTC %s", s_hasRtc ? "ok" : "missing");
 
-  // LVGL draw buffers live in PSRAM: the QSPI bus copies pixels into its own DMA buffer,
-  // and internal RAM is needed for Wi-Fi, TLS (HTTPS) and the web server.
+  // LVGL draw buffers: every pixel is drawn into these and then read again by the QSPI bus, so
+  // internal RAM (several times faster than PSRAM) makes a big difference to frame rate. TLS and
+  // LVGL objects can live in PSRAM now, which leaves room; fall back to smaller / PSRAM buffers.
   lv_init();
-  size_t lines = 80;
-  size_t bufPx = LCD_W * lines;
-  lv_color_t *b1 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-  lv_color_t *b2 = (lv_color_t *)heap_caps_malloc(bufPx * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  size_t lines = 0;
+  lv_color_t *b1 = nullptr, *b2 = nullptr;
+  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  for (size_t try_lines : {40, 24}) {
+    size_t bytes = LCD_W * try_lines * sizeof(lv_color_t);
+    if (largest < bytes || freeInt < 2 * bytes + 150 * 1024) continue;
+    b1 = (lv_color_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    b2 = (lv_color_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (b1 && b2) { lines = try_lines; break; }
+    heap_caps_free(b1); heap_caps_free(b2); b1 = b2 = nullptr;
+  }
+  bool inPsram = false;
+  if (!lines) {
+    lines = 80; inPsram = true;
+    b1 = (lv_color_t *)heap_caps_malloc(LCD_W * lines * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    b2 = (lv_color_t *)heap_caps_malloc(LCD_W * lines * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  }
   if (!b1 || !b2) { LOGI("hw: LVGL buffer alloc failed"); return false; }
+  s_drawBufInfo = String(lines) + " lines, " + (inPsram ? "PSRAM" : "internal");
+  LOGI("hw: draw buffers %s (internal free before: %u KB)", s_drawBufInfo.c_str(), (unsigned)(freeInt / 1024));
+  size_t bufPx = LCD_W * lines;
   lv_disp_draw_buf_init(&s_drawBuf, b1, b2, bufPx);
   lv_disp_drv_init(&s_dispDrv);
   s_dispDrv.hor_res = LCD_W;

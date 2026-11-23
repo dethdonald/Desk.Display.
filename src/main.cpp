@@ -28,6 +28,7 @@ static void *tlsCalloc(size_t n, size_t sz) {
   return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 static void tlsFree(void *p) { heap_caps_free(p); }
+extern "C" { volatile size_t g_lvInternalReserve = 400 * 1024; }   // see lv_psram.h
 
 // Keep a freshly-installed firmware in "pending verify" until it has run healthily for a while.
 // If it crashes or reboots before that, the bootloader rolls back to the previous version.
@@ -344,6 +345,18 @@ void loop() {
   if (s_safeMode) { safeLoop(); return; }
   static bool healthy = false;
   if (!healthy && millis() > 30000) { healthy = true; s_bcCrashes = 0; bootStep("running", false); esp_core_dump_image_erase(); }
+  static bool fastMem = false;
+  if (!fastMem && millis() > 25000) {
+    // Start-up is done (Wi-Fi, web server, background tasks own their memory now): let LVGL use
+    // spare internal RAM, then rebuild the pages once so they move into it.
+    fastMem = true;
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    g_lvInternalReserve = 96 * 1024;
+    lv_mem_buf_free_all();
+    uiApplySettings();
+    LOGI("ui: pages rebuilt in fast RAM (internal %u -> %u KB free)", (unsigned)(before / 1024),
+         (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+  }
   lv_timer_handler();
   inputTick();
   uiTick();

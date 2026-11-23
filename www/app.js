@@ -1084,7 +1084,7 @@ TABS.maint = async () => {
     ["Free memory", `${Math.round(st.heap / 1024)} KB (min ${Math.round(st.heap_min / 1024)} KB) · PSRAM ${Math.round(st.psram / 1024)} KB`],
     ["Internal RAM", st.ram_internal != null ? `${Math.round(st.ram_internal / 1024)} KB (min ${Math.round(st.ram_internal_min / 1024)} KB)` : "-"],
     ["Network", n.ap ? "Setup network" : `${n.ssid} · ${n.rssi} dBm`], ["Address", `${n.ip} · ${n.host}.local`], ["MAC", n.mac],
-    ["Display", st.display ? `${(st.display.fps || 0).toFixed(1)} fps · ${(st.display.mbps || 0).toFixed(1)} MB/s · bus ${Math.round(st.display.bus_busy_pct || 0)}% busy` : "-"],
+    ["Display", st.display ? `${(st.display.fps || 0).toFixed(1)} fps · ${(st.display.mbps || 0).toFixed(1)} MB/s · bus ${Math.round(st.display.bus_busy_pct || 0)}% busy${st.display.draw_buffers ? " · buffers " + st.display.draw_buffers : ""}` : "-"],
     ["Power", b.present ? `${b.percent}% · ${b.mv} mV${b.charging ? " · charging" : ""}` : "USB (no battery)"], ["Clock", st.time_valid ? new Date(st.time * 1000).toLocaleString() : "not set yet"]];
   const logPre = h("pre", { id: "logs" }, "Loading…");
   const dataBox = h("div", {});
