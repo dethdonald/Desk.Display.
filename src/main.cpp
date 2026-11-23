@@ -18,6 +18,16 @@
 #include "web.h"
 #include "sound.h"
 #include "bambu.h"
+#include <esp_heap_caps.h>
+#include <mbedtls/platform.h>
+
+// Each TLS connection needs ~40-50 KB. The framework puts that in scarce internal RAM, so with the
+// printer link open a second one (GitHub update check / download) fails. Use the 8 MB PSRAM instead.
+static void *tlsCalloc(size_t n, size_t sz) {
+  void *p = heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+static void tlsFree(void *p) { heap_caps_free(p); }
 
 // Keep a freshly-installed firmware in "pending verify" until it has run healthily for a while.
 // If it crashes or reboots before that, the bootloader rolls back to the previous version.
@@ -237,6 +247,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);                                   // give the USB serial port time to attach for logs
   logInit();
+  mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
   LOGI("%s %s starting", FW_NAME, FW_VERSION);
   LOGI("psram: %u bytes, flash: %u bytes", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFlashChipSize());
   dsInit();

@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
+#include <esp_heap_caps.h>
 #include <HTTPUpdate.h>
 #include <vector>
 #include <functional>
@@ -98,7 +99,16 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &err, size_
   if (!(https ? http.begin(secure, url) : http.begin(plain, url))) { err = "bad URL"; return false; }
   http.addHeader("Accept", "application/json");
   int code = http.GET();
-  if (code <= 0) { err = "HTTP " + String(code) + " (" + http.errorToString(code) + ")"; http.end(); return false; }
+  if (code <= 0) {
+    err = "HTTP " + String(code) + " (" + http.errorToString(code) + ")";
+    if (https) {
+      char tlsErr[80] = {0};
+      int tc = secure.lastError(tlsErr, sizeof tlsErr);
+      if (tc) err += " TLS " + String(tc) + ": " + tlsErr;
+    }
+    err += " [ram " + String(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) + "K]";
+    http.end(); return false;
+  }
   int len = http.getSize();
   if (len > (int)maxLen) { err = "response too large"; http.end(); return false; }
   String body = http.getString();          // handles chunked transfer encoding
