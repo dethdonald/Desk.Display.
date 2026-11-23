@@ -204,6 +204,7 @@ static void handleCommands() {
       }
       case CMD_LAYOUT_SAVE:
         if (uiApplyLayout(c.payload, true)) { webSnapshotLayout(); uiToast("Layout saved"); }
+        else LOGI("layout: save failed (internal RAM %u KB free)", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
         s_previewSince = 0;
         break;
       case CMD_LAYOUT_PREVIEW:

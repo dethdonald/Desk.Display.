@@ -693,9 +693,14 @@ async function previewOnDevice() {
   try { await api("/api/layout/preview", { body: Editor.layout }); toast("Showing on the display (not saved). Reverts after 10 min."); }
   catch (e) { toast(e.message, true); }
 }
+const layoutSig = l => JSON.stringify(l, (k, v) => typeof v === "number" ? Math.round(v * 1000) / 1000 : v);
 async function saveLayout() {
   try {
     await api("/api/layout", { body: Editor.layout });
+    // The display applies it a moment later; confirm it actually took.
+    let okSaved = false;
+    for (let i = 0; i < 6 && !okSaved; i++) { await sleep(500); try { okSaved = layoutSig(await api("/api/layout")) === layoutSig(Editor.layout); } catch { } }
+    if (!okSaved) throw new Error("the display didn't apply it - see Maintenance → Logs");
     S.layout = clone(Editor.layout); Editor.dirty = false; toast("Layout saved to the display"); drawEditor();
   } catch (e) { toast("Save failed: " + e.message, true); }
 }
