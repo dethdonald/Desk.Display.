@@ -466,7 +466,7 @@ function propSchema(t) {
 const COMMON_PROPS = [["bg", "Background", "color"], ["radius", "Corner radius", "num"], ["border", "Border px", "num"], ["border_color", "Border color", "color"], ["pad", "Padding px", "num"]];
 
 const Editor = {
-  layout: null, page: 0, sel: -1, dirty: false, undo: [], redo: [], grid: true, nightPreview: false,
+  layout: null, page: 0, sel: -1, dirty: false, previewing: false, undo: [], redo: [], grid: true, nightPreview: false,
   load(l) { this.layout = clone(l); this.page = Math.min(this.page, this.layout.pages.length - 1); this.sel = -1; this.dirty = false; this.undo = []; this.redo = []; },
   snapshot() { this.undo.push(JSON.stringify(this.layout)); if (this.undo.length > 80) this.undo.shift(); this.redo = []; this.dirty = true; },
   doUndo() { if (!this.undo.length) return; this.redo.push(JSON.stringify(this.layout)); this.layout = JSON.parse(this.undo.pop()); this.fix(); this.dirty = true; drawEditor(); },
@@ -476,68 +476,104 @@ const Editor = {
   w() { return this.sel >= 0 ? this.pg().widgets[this.sel] : null; },
 };
 
+window.addEventListener("beforeunload", e => { if (Editor.dirty) { e.preventDefault(); e.returnValue = ""; } });
 TABS.layout = async () => {
   if (!Editor.layout) Editor.load(S.layout || await api("/api/layout"));
   drawEditor();
 };
 
+function switchEl(on, onchange, title) {
+  const c = h("input", { type: "checkbox", class: "sw", title: title || "" }); c.checked = !!on;
+  c.onclick = e => e.stopPropagation(); c.onchange = () => onchange(c.checked);
+  return c;
+}
+function addPageMenu(L) {
+  return sel([["", "+ Add page…"], ["blank", "Blank page"], ["dup", "Copy of this page"], ["Overview", "Overview (printer + Claude bars)"], ["Printer", "Bambu printer"]], "", async v => {
+    if (!v) return;
+    let pg;
+    if (v === "blank") pg = { name: "Page " + (L.pages.length + 1), enabled: true, duration: 15, widgets: [] };
+    else if (v === "dup") { pg = clone(Editor.pg()); pg.name += " copy"; }
+    else { pg = await presetPage(v); if (!pg) { toast("Preset not found", true); return drawEditor(); } }
+    Editor.snapshot(); pg.enabled = true; L.pages.push(pg); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor();
+    toast(`Added "${pg.name}" — press Save to display to send it`);
+  });
+}
 function drawEditor() {
   const el = $("#tab-layout");
   const L = Editor.layout;
+  const shown = L.pages.filter(p => p.enabled !== false).length;
+  const more = h("details", { class: "menu" }, h("summary", { class: "btn sm" }, "More ▾"),
+    h("div", { class: "menu-body" },
+      h("div", { class: "small muted" }, "Start from a template (replaces everything, you can undo):"),
+      sel([["", "Choose template…"], ["default", "Default (4 pages)"], ["bigclock", "Big clock"], ["usage", "Usage focus"], ["minimal", "Minimal"]], "", applyTemplate),
+      h("div", { class: "row" }, h("button", { class: "btn sm", onclick: exportLayout, title: "Download this design as a file" }, "Export to file"),
+        h("button", { class: "btn sm", onclick: importLayout, title: "Load a design file (then Save to display)" }, "Import file")),
+      check("Show grid", Editor.grid, v => { Editor.grid = v; drawEditor(); }),
+      check("Edit night colors", Editor.nightPreview, v => { Editor.nightPreview = v; drawEditor(); })));
+  const status = Editor.dirty
+    ? h("div", { class: "savebar dirty" }, h("b", {}, "● Unsaved changes"), h("span", { class: "small" }, "The display still shows the old design until you save."))
+    : h("div", { class: "savebar ok" }, h("b", {}, "✓ Saved"), h("span", { class: "small muted" }, "The display matches this design."));
   const tb = h("div", { class: "toolbar" },
-    h("button", { class: "btn sm", onclick: () => Editor.doUndo(), disabled: !Editor.undo.length, title: "Ctrl+Z" }, "Undo"),
-    h("button", { class: "btn sm", onclick: () => Editor.doRedo(), disabled: !Editor.redo.length, title: "Ctrl+Y" }, "Redo"),
+    h("button", { class: "btn" + (Editor.dirty ? " primary pulse" : ""), onclick: saveLayout, disabled: !Editor.dirty, title: "Send this design to the display and keep it" }, "Save to display"),
+    h("button", { class: "btn sm", disabled: !Editor.dirty, onclick: () => { if (confirm("Throw away your unsaved changes?")) { Editor.load(S.layout); drawEditor(); } } }, "Discard changes"),
     h("span", { class: "sep" }),
-    h("button", { class: "btn sm", onclick: previewOnDevice }, "Preview on device"),
-    h("button", { class: "btn sm", onclick: async () => { await api("/api/layout/revert", { method: "POST" }); toast("Device back to saved layout"); } }, "Stop preview"),
-    h("button", { class: "btn sm primary", onclick: saveLayout }, "Save to device"),
-    h("button", { class: "btn sm", disabled: !Editor.dirty, onclick: () => { if (confirm("Discard unsaved changes?")) { Editor.load(S.layout); drawEditor(); } } }, "Discard"),
+    h("button", { class: "btn sm icon", onclick: () => Editor.doUndo(), disabled: !Editor.undo.length, title: "Undo (Ctrl+Z)" }, "↶ Undo"),
+    h("button", { class: "btn sm icon", onclick: () => Editor.doRedo(), disabled: !Editor.redo.length, title: "Redo (Ctrl+Y)" }, "↷ Redo"),
     h("span", { class: "sep" }),
-    sel([["", "Templates…"], ["default", "Default (4 pages)"], ["bigclock", "Big clock"], ["usage", "Usage focus"], ["minimal", "Minimal"]], "", applyTemplate),
-    h("button", { class: "btn sm", onclick: exportLayout }, "Export"),
-    h("button", { class: "btn sm", onclick: importLayout }, "Import"),
-    h("span", { class: "sep" }),
-    check("Grid", Editor.grid, v => { Editor.grid = v; drawEditor(); }),
-    check("Night theme", Editor.nightPreview, v => { Editor.nightPreview = v; drawEditor(); }),
-    Editor.dirty ? h("span", { class: "dirty" }, "● Unsaved changes") : null);
+    Editor.previewing
+      ? h("button", { class: "btn sm live", onclick: stopPreview, title: "Put the saved design back on the display" }, "■ Stop trying on display")
+      : h("button", { class: "btn sm", onclick: previewOnDevice, title: "Show this design on the display for 10 minutes without saving it" }, "▶ Try on display"),
+    more, h("span", { class: "grow" }), status);
 
-  // left: pages + theme
-  const pages = h("div", { class: "card stack" }, h("h2", {}, "Pages"),
-    ...L.pages.map((p, i) => h("div", { class: "list-item" + (i === Editor.page ? " sel" : ""), onclick: () => { Editor.page = i; Editor.sel = -1; drawEditor(); } },
-      h("span", { class: "grow" }, (p.enabled === false ? "○ " : "") + (p.name || "Page " + (i + 1))),
-      (L.home ?? 0) === i ? h("span", { class: "badge" }, "home") : null,
-      h("button", { class: "btn sm icon", title: "Move up", onclick: e => { e.stopPropagation(); movePage(i, -1); } }, "↑"),
-      h("button", { class: "btn sm icon", title: "Move down", onclick: e => { e.stopPropagation(); movePage(i, 1); } }, "↓"))),
-    h("div", { class: "row" },
-      h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); L.pages.push({ name: "Page " + (L.pages.length + 1), enabled: true, duration: 15, widgets: [] }); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor(); } }, "+ Page"),
-      h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); const c = clone(Editor.pg()); c.name += " copy"; L.pages.splice(Editor.page + 1, 0, c); Editor.page++; drawEditor(); } }, "Duplicate"),
-      sel([["", "+ Preset page…"], ["Overview", "Overview (all progress bars)"], ["Printer", "Bambu printer"]], "", async v => {
-        if (!v) return; const pg = await presetPage(v); if (!pg) return toast("Preset not found", true);
-        Editor.snapshot(); pg.enabled = true; L.pages.push(pg); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor();
-      }),
-      h("button", { class: "btn sm danger", disabled: L.pages.length < 2, onclick: () => { if (!confirm("Delete this page?")) return; Editor.snapshot(); L.pages.splice(Editor.page, 1); if ((L.home ?? 0) >= L.pages.length) L.home = 0; Editor.fix(); drawEditor(); } }, "Delete")));
+  // left: pages
+  const pages = h("div", { class: "card stack" },
+    h("div", { class: "row between" }, h("h2", { style: { margin: 0 } }, "Pages"), h("span", { class: "small muted" }, `${shown} of ${L.pages.length} on the display`)),
+    h("p", { class: "small muted", style: { margin: 0 } }, "Click a page to edit it. The switch shows or hides it on the display; ★ is the page it starts on."),
+    ...L.pages.map((p, i) => {
+      const on = p.enabled !== false;
+      return h("div", { class: "list-item" + (i === Editor.page ? " sel" : "") + (on ? "" : " off"), onclick: () => { Editor.page = i; Editor.sel = -1; drawEditor(); } },
+        switchEl(on, v => { Editor.snapshot(); p.enabled = v; if (!v && shown <= 1) { p.enabled = true; toast("At least one page has to stay on", true); } drawEditor(); }, on ? "Shown on the display — click to hide" : "Hidden — click to show"),
+        h("span", { class: "grow" }, h("span", { class: "pnum" }, i + 1 + "."), " ", p.name || "Page " + (i + 1)),
+        (L.home ?? 0) === i ? h("span", { class: "star", title: "Home page" }, "★") : null,
+        h("button", { class: "btn sm icon", title: "Move up", disabled: i === 0, onclick: e => { e.stopPropagation(); movePage(i, -1); } }, "↑"),
+        h("button", { class: "btn sm icon", title: "Move down", disabled: i === L.pages.length - 1, onclick: e => { e.stopPropagation(); movePage(i, 1); } }, "↓"));
+    }),
+    addPageMenu(L));
   const pg = Editor.pg();
-  const pageProps = h("div", { class: "card stack" }, h("h2", {}, "This page"),
+  const autoRotate = get(S.settings, "controls.auto_rotate.enabled", false);
+  const opt = (title, hint, control) => h("label", { class: "opt" }, h("span", {}, h("b", {}, title), h("span", { class: "small muted" }, hint)), control);
+  const pageProps = h("div", { class: "card stack" }, h("h2", {}, "Page settings"),
     field("Name", inp("text", pg.name, v => { pg.name = v; Editor.dirty = true; }, { onchange: () => { Editor.snapshot(); drawEditor(); } })),
-    check("Enabled", pg.enabled !== false, v => { Editor.snapshot(); pg.enabled = v; drawEditor(); }),
-    check("Home page", (L.home ?? 0) === Editor.page, v => { Editor.snapshot(); L.home = v ? Editor.page : 0; drawEditor(); }),
-    field("Auto-rotate time (s)", inp("number", pg.duration ?? 15, v => { pg.duration = v || 0; Editor.dirty = true; }, { min: 0, max: 3600 }), "when auto-rotate is on"),
-    field("Stay on this page", (() => { const c = h("input", { type: "checkbox" }); c.checked = pg.stay ?? (pg.name === "Printer"); c.onchange = () => { pg.stay = c.checked; Editor.dirty = true; }; return c; })(), "don't jump back to the home page when idle"),
-    field("Background override", colorField(pg.bg || "", v => { Editor.snapshot(); if (v) pg.bg = v; else delete pg.bg; drawEditor(); }, true)));
+    opt("Show on display", "Off = kept here but skipped on the device", switchEl(pg.enabled !== false, v => { Editor.snapshot(); pg.enabled = v; drawEditor(); })),
+    opt("Home page", "Shown at start-up and after being idle", switchEl((L.home ?? 0) === Editor.page, v => { Editor.snapshot(); L.home = v ? Editor.page : 0; drawEditor(); })),
+    opt("Stay on this page", "Don't jump back to the home page when idle", switchEl(pg.stay ?? (pg.name === "Printer" || pg.name === "Overview"), v => { Editor.snapshot(); pg.stay = v; drawEditor(); })),
+    autoRotate ? field("Seconds on this page", inp("number", pg.duration ?? 15, v => { pg.duration = v || 0; Editor.dirty = true; }, { min: 0, max: 3600 }), " (auto-rotate)") : null,
+    field("Background", colorField(pg.bg || "", v => { Editor.snapshot(); if (v) pg.bg = v; else delete pg.bg; drawEditor(); }, true)),
+    h("button", { class: "btn sm danger", disabled: L.pages.length < 2, onclick: () => { if (!confirm(`Delete the page "${pg.name}"?`)) return; Editor.snapshot(); L.pages.splice(Editor.page, 1); if ((L.home ?? 0) >= L.pages.length) L.home = 0; Editor.fix(); drawEditor(); } }, "Delete this page"));
   const themeKey = Editor.nightPreview ? "night_theme" : "theme";
   if (!L[themeKey]) L[themeKey] = clone(themeKey === "theme" ? DEFAULT_THEME : themeOf(L, false));
-  const theme = h("div", { class: "card stack" }, h("h2", {}, Editor.nightPreview ? "Night theme colors" : "Theme colors"),
-    h("div", { class: "swatches" }, ...THEME_KEYS.map(k => h("label", {}, k, inp("color", L[themeKey][k] || DEFAULT_THEME[k], v => { L[themeKey][k] = v.toUpperCase(); Editor.dirty = true; redrawCanvas(); }, { onchange: () => Editor.snapshot() })))),
-    h("p", { class: "small muted" }, "Widgets reference these by name, so changing a theme color updates every widget using it. Toggle \"Night theme\" above to edit the night palette."));
+  const theme = h("details", { class: "card" }, h("summary", { class: "h2like" }, Editor.nightPreview ? "Night colors" : "Colors (all pages)"),
+    h("div", { class: "swatches", style: { marginTop: "12px" } }, ...THEME_KEYS.map(k => h("label", {}, k, inp("color", L[themeKey][k] || DEFAULT_THEME[k], v => { L[themeKey][k] = v.toUpperCase(); Editor.dirty = true; redrawCanvas(); }, { onchange: () => Editor.snapshot() })))),
+    h("p", { class: "small muted" }, "Widgets use these by name, so one change updates every page. Night colors: More ▾ → Edit night colors."));
   const left = h("div", { class: "side" }, pages, pageProps, theme);
 
   // center: canvas
   const wrap = h("div", { class: "screen-wrap", id: "edWrap" });
-  const center = h("div", { class: "canvas-col" }, h("div", { class: "card" }, h("div", { class: "bezel" }, wrap),
-    h("p", { class: "small muted", style: { marginTop: "10px" } }, "Drag widgets to move them and the orange corner to resize. They snap to a 12 × 12 grid (40 px). Keyboard: arrows move, Shift+arrows resize, Delete removes, Ctrl+D duplicates.")));
+  const center = h("div", { class: "canvas-col" }, h("div", { class: "card stack" },
+    h("div", { class: "row between" }, h("h2", { style: { margin: 0 } }, `${Editor.page + 1}. ${pg.name || "Page"}`),
+      h("div", { class: "row" }, h("button", { class: "btn sm icon", disabled: Editor.page === 0, onclick: () => { Editor.page--; Editor.sel = -1; drawEditor(); }, title: "Previous page" }, "‹"),
+        h("button", { class: "btn sm icon", disabled: Editor.page >= L.pages.length - 1, onclick: () => { Editor.page++; Editor.sel = -1; drawEditor(); }, title: "Next page" }, "›"))),
+    pg.enabled === false ? h("div", { class: "warnbar" }, "This page is hidden, so the display skips it. ", h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); pg.enabled = true; drawEditor(); } }, "Show it")) : null,
+    h("div", { class: "bezel" }, wrap),
+    h("details", { class: "small muted" }, h("summary", { style: { cursor: "pointer" } }, "How to edit"),
+      h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px" } },
+        h("li", {}, "Click a widget to select it, drag to move, drag the orange corner to resize."),
+        h("li", {}, "Add widgets from the list on the right; change the selected one under it."),
+        h("li", {}, "Keyboard: arrows move · Shift+arrows resize · Delete removes · Ctrl+D duplicates · Ctrl+Z undo."),
+        h("li", {}, "Nothing reaches the display until you press ", h("b", {}, "Save to display"), ".")))));
 
   // right: palette + props
-  const palette = h("div", { class: "card stack" }, h("h2", {}, "Add widget"),
+  const palette = h("div", { class: "card stack" }, h("h2", {}, "Add to this page"),
     h("div", { class: "palette" }, ...Object.entries(WIDGETS).map(([t, d]) => h("button", { class: "btn sm", onclick: () => addWidget(t) }, d.label))));
   const right = h("div", { class: "side" }, palette, propsPanel());
   el.replaceChildren(tb, h("div", { class: "editor" }, left, center, right));
@@ -656,7 +692,7 @@ function tmplHelp(target) {
 function propsPanel() {
   const w = Editor.w();
   const card = h("div", { class: "card props" });
-  if (!w) { card.append(h("h2", {}, "Properties"), h("p", { class: "muted" }, "Select a widget on the canvas to edit it.")); return card; }
+  if (!w) { card.append(h("h2", {}, "Selected widget"), h("p", { class: "muted" }, "Nothing selected. Click a widget on the screen to change its text, data, colors and size.")); return card; }
   const change = (k, v, redraw = false) => {
     if (v === null || v === "" || v === undefined) delete w[k]; else w[k] = v;
     Editor.dirty = true; redraw ? drawEditor() : redrawCanvas();
@@ -690,8 +726,12 @@ function propsPanel() {
 }
 
 async function previewOnDevice() {
-  try { await api("/api/layout/preview", { body: Editor.layout }); toast("Showing on the display (not saved). Reverts after 10 min."); }
+  try { await api("/api/layout/preview", { body: Editor.layout }); Editor.previewing = true; drawEditor(); toast("Trying it on the display (not saved). Goes back after 10 min."); }
   catch (e) { toast(e.message, true); }
+}
+async function stopPreview() {
+  try { await api("/api/layout/revert", { method: "POST" }); } catch { }
+  Editor.previewing = false; drawEditor(); toast("Display is back to the saved design");
 }
 const layoutSig = l => JSON.stringify(l, (k, v) => typeof v === "number" ? Math.round(v * 1000) / 1000 : v);
 async function saveLayout() {
@@ -701,7 +741,7 @@ async function saveLayout() {
     let okSaved = false;
     for (let i = 0; i < 6 && !okSaved; i++) { await sleep(500); try { okSaved = layoutSig(await api("/api/layout")) === layoutSig(Editor.layout); } catch { } }
     if (!okSaved) throw new Error("the display didn't apply it - see Maintenance → Logs");
-    S.layout = clone(Editor.layout); Editor.dirty = false; toast("Layout saved to the display"); drawEditor();
+    S.layout = clone(Editor.layout); Editor.dirty = false; Editor.previewing = false; toast("Saved — the display now shows this design"); drawEditor();
   } catch (e) { toast("Save failed: " + e.message, true); }
 }
 function exportLayout() {
