@@ -110,7 +110,19 @@ static void task(void *) {
         backoff = 2000;
       } else {
         int st = s_mqtt.state();
-        String err = st == 4 ? "Wrong access code" : st == 5 ? "Not authorized" : st == -2 ? "Printer not reachable" : "MQTT error " + String(st);
+        String err;
+        if (st == 4) err = "Wrong access code";
+        else if (st == 5) err = "Not authorized (check the access code)";
+        else if (st == -2) {
+          // Tell apart "nothing answers at that address" from "answered, but TLS failed"
+          char tlsErr[100] = {0};
+          int tlsCode = s_tls.lastError(tlsErr, sizeof tlsErr);
+          NetworkClient probe;
+          bool tcp = probe.connect(cfg.ip.c_str(), 8883, 3000);
+          probe.stop();
+          if (!tcp) err = "No answer from " + cfg.ip + ":8883 (check the IP and that both are on the same network)";
+          else err = "Printer found, secure connection failed (" + String(tlsCode) + ": " + tlsErr + ")";
+        } else err = "MQTT error " + String(st);
         dsSetStr("bambu.error", err);
         dsSetNum("bambu.connected", 0);
         LOGI("bambu: connect failed (%s)", err.c_str());
