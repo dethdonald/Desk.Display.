@@ -28,6 +28,8 @@ uint16_t uiPageDuration(int index);                // seconds for auto-rotate (0
 // Display state
 void uiSetSleep(bool sleep);
 bool uiSleeping();
+void uiSetDim(bool dim);                          // inactivity dim (keeps the screen on)
+bool uiDimmed();
 void uiSetNight(bool night);
 bool uiNight();
 void uiApplyBrightness();

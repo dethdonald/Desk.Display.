@@ -1295,11 +1295,15 @@ bool uiPageStay(int i) { return i >= 0 && i < (int)s_pages.size() && s_pages[i].
 uint16_t uiPageDuration(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].duration : 0; }
 
 // ---------------------------------------------------------------- display state
+static bool s_dimmed = false;
 static uint8_t currentBrightness() {
   JsonObject d = S("display");
   int b = s_night ? (int)(d["night"]["brightness"] | 25) : (int)(d["brightness"] | 180);
+  if (s_dimmed) b = min(b, max(1, b * constrain((int)(d["dim_percent"] | 15), 1, 100) / 100));
   return (uint8_t)constrain(b, 1, 255);
 }
+static int s_dimAnimVar;
+static void dimExec(void *, int32_t v) { hwSetBrightness((uint8_t)v); }
 
 void uiApplyBrightness() {
   if (s_sleep || s_dipping) return;
@@ -1313,6 +1317,25 @@ void uiSetSleep(bool sleep) {
   else { hwDisplayPower(true); uiApplyBrightness(); lv_obj_invalidate(lv_scr_act()); LOGI("display: wake"); }
 }
 bool uiSleeping() { return s_sleep; }
+
+// Inactivity dim: fade to a fraction of the normal brightness (slow down, quick up).
+void uiSetDim(bool dim) {
+  if (dim == s_dimmed) return;
+  uint8_t from = currentBrightness();
+  s_dimmed = dim;
+  LOGI("display: %s", dim ? "dimmed" : "undimmed");
+  if (s_sleep || s_dipping) return;
+  lv_anim_del(&s_dimAnimVar, dimExec);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, &s_dimAnimVar);
+  lv_anim_set_exec_cb(&a, dimExec);
+  lv_anim_set_values(&a, from, currentBrightness());
+  lv_anim_set_time(&a, dim ? 1500 : 250);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+}
+bool uiDimmed() { return s_dimmed; }
 
 void uiSetNight(bool night) {
   if (night == s_night) return;

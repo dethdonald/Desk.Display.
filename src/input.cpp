@@ -5,6 +5,7 @@
 #include "logbuf.h"
 #include "config.h"
 #include "sound.h"
+#include "datastore.h"
 #include <map>
 #include <vector>
 
@@ -13,7 +14,7 @@ struct Cfg {
   float tiltTh = 25, tiltHold = 250; bool invLR = false, invFB = false;
   float rest[3] = {0, 0, 1};
   float shakeG = 1.0f; uint16_t flipHold = 800; float pickupG = 0.15f; float stillS = 5;
-  bool autoRotate = false; uint16_t autoDefault = 15; uint32_t idleHome = 120; uint32_t sleepAfter = 0;
+  bool autoRotate = false; uint16_t autoDefault = 15; uint32_t idleHome = 120; uint32_t sleepAfter = 0; uint32_t dimAfter = 0; bool awakePrinting = true;
 };
 
 static Cfg c;
@@ -88,6 +89,8 @@ void inputApplySettings() {
   c.autoDefault = k["auto_rotate"]["default_s"] | 15;
   c.idleHome = (uint32_t)(k["idle_home_s"] | 120) * 1000;
   c.sleepAfter = (uint32_t)(S("display")["sleep_after_min"] | 0) * 60000;
+  c.dimAfter = (uint32_t)(S("display")["dim_after_s"] | 0) * 1000;
+  c.awakePrinting = S("display")["awake_while_printing"] | true;
   s_rotMode = (const char *)(S("display")["rotation"]["mode"] | "auto");
   s_rotOffset = S("display")["rotation"]["offset"] | 0;
   s_rotReverse = S("display")["rotation"]["reverse"] | false;
@@ -143,7 +146,7 @@ static void emit(const String &ev) {
   if (ev != "flip") s_lastActivity = now;
 
   if (uiSleeping()) {
-    if (isWakeEvent(ev)) uiSetSleep(false);
+    if (isWakeEvent(ev)) { uiSetDim(false); uiSetSleep(false); }
     return;
   }
   if (uiOverlayVisible() && (ev.startsWith("boot") || ev == "pwr_short")) { uiHideOverlay(); return; }
@@ -323,6 +326,11 @@ void inputTick() {
     } else if (c.idleHome && idle > c.idleHome && !uiPageStay(page)) {
       uiHome();
     }
+    bool printing = false;
+    if (c.awakePrinting) { DsEntry e; printing = dsGet("bambu.state", e) && (e.str == "RUNNING" || e.str == "PREPARE"); }
+    if (printing) idle = 0;
+    if (c.dimAfter && idle > c.dimAfter) uiSetDim(true);
+    else if (uiDimmed() && idle < 1000) uiSetDim(false);
     if (c.sleepAfter && idle > c.sleepAfter) uiSetSleep(true);
   }
   if (uiOverlayVisible() && now - s_lastActivity > 30000) uiHideOverlay();

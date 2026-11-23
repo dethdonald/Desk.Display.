@@ -18,6 +18,9 @@ static const char DEFAULTS[] = R"JSON({
     "pixel_shift": true,
     "rotation": {"mode": "auto", "offset": 0, "reverse": false, "effect": "dip", "effect_ms": 360},
     "sleep_after_min": 0,
+    "dim_after_s": 0,
+    "dim_percent": 15,
+    "awake_while_printing": true,
     "night": {"enabled": true, "start": "22:30", "end": "07:00", "brightness": 25, "use_night_theme": true, "screen_off": false}
   },
   "battery": {"capacity_mah": 1000},
