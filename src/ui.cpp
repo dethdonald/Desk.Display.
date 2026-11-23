@@ -411,7 +411,94 @@ static const char DEFAULT_LAYOUT[] = R"JSON({
      "text": "Nozzle {bambu.nozzle:0}°   Bed {bambu.bed:0}°"
     }
    ]
-  }
+  },
+ {
+  "name": "Overview",
+  "enabled": false,
+  "duration": 20,
+  "stay": true,
+  "bg": "#000000",
+  "widgets": [
+   {
+    "type": "clock",
+    "x": 3,
+    "y": 0,
+    "w": 6,
+    "h": 2,
+    "size": 44,
+    "ampm": true,
+    "color": "#FFFFFF",
+    "ampm_color": "#9A9A9A"
+   },
+   {
+    "type": "bar",
+    "x": 1,
+    "y": 2,
+    "w": 10,
+    "h": 3,
+    "key": "bambu.percent",
+    "label": "Printer · {bambu.state_text}",
+    "sub": "Layer {bambu.layer:0}/{bambu.total_layers:0}  ·  done {bambu.eta|time}",
+   "empty": "Printer not connected",
+    "size": 20,
+    "bar_h": 30,
+    "value_pos": "inside",
+    "value_size": 18,
+    "color_mode": "fixed",
+    "color": "#00AE42",
+    "track": "#16301F",
+    "label_color": "#FFFFFF"
+   },
+   {
+    "type": "bar",
+    "x": 1,
+    "y": 5,
+    "w": 10,
+    "h": 3,
+    "key": "claude.five_hour.used_percentage",
+    "label": "Claude session",
+    "sub": "Resets in {claude.five_hour.resets_at|in}",
+    "size": 20,
+    "bar_h": 30,
+    "value_pos": "inside",
+    "value_size": 18,
+    "color_mode": "fixed",
+    "color": "#D97757",
+    "track": "#2A1A14",
+    "label_color": "#FFFFFF"
+   },
+   {
+    "type": "bar",
+    "x": 1,
+    "y": 8,
+    "w": 10,
+    "h": 3,
+    "key": "claude.seven_day.used_percentage",
+    "label": "Claude week",
+    "sub": "Resets {claude.seven_day.resets_at|day} {claude.seven_day.resets_at|time}",
+    "size": 20,
+    "bar_h": 30,
+    "value_pos": "inside",
+    "value_size": 18,
+    "color_mode": "fixed",
+    "color": "#D97757",
+    "track": "#2A1A14",
+    "label_color": "#FFFFFF"
+   },
+   {
+    "type": "text",
+    "x": 0,
+    "y": 11,
+    "w": 12,
+    "h": 1,
+    "size": 16,
+    "color": "muted",
+    "align": "center",
+    "overflow": "clip",
+    "text": "{weather.temp:0}° {weather.desc}  ·  Claude updated {claude.updated|ago}"
+   }
+  ]
+ }
  ]
 })JSON";
 

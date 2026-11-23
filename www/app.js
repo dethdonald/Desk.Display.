@@ -511,7 +511,7 @@ function drawEditor() {
     h("div", { class: "row" },
       h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); L.pages.push({ name: "Page " + (L.pages.length + 1), enabled: true, duration: 15, widgets: [] }); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor(); } }, "+ Page"),
       h("button", { class: "btn sm", onclick: () => { Editor.snapshot(); const c = clone(Editor.pg()); c.name += " copy"; L.pages.splice(Editor.page + 1, 0, c); Editor.page++; drawEditor(); } }, "Duplicate"),
-      sel([["", "+ Preset page…"], ["Printer", "Bambu printer"]], "", async v => {
+      sel([["", "+ Preset page…"], ["Overview", "Overview (all progress bars)"], ["Printer", "Bambu printer"]], "", async v => {
         if (!v) return; const pg = await presetPage(v); if (!pg) return toast("Preset not found", true);
         Editor.snapshot(); pg.enabled = true; L.pages.push(pg); Editor.page = L.pages.length - 1; Editor.sel = -1; drawEditor();
       }),
