@@ -522,6 +522,7 @@ function drawEditor() {
     check("Enabled", pg.enabled !== false, v => { Editor.snapshot(); pg.enabled = v; drawEditor(); }),
     check("Home page", (L.home ?? 0) === Editor.page, v => { Editor.snapshot(); L.home = v ? Editor.page : 0; drawEditor(); }),
     field("Auto-rotate time (s)", inp("number", pg.duration ?? 15, v => { pg.duration = v || 0; Editor.dirty = true; }, { min: 0, max: 3600 }), "when auto-rotate is on"),
+    field("Stay on this page", (() => { const c = h("input", { type: "checkbox" }); c.checked = pg.stay ?? (pg.name === "Printer"); c.onchange = () => { pg.stay = c.checked; Editor.dirty = true; }; return c; })(), "don't jump back to the home page when idle"),
     field("Background override", colorField(pg.bg || "", v => { Editor.snapshot(); if (v) pg.bg = v; else delete pg.bg; drawEditor(); }, true)));
   const themeKey = Editor.nightPreview ? "night_theme" : "theme";
   if (!L[themeKey]) L[themeKey] = clone(themeKey === "theme" ? DEFAULT_THEME : themeOf(L, false));
@@ -982,6 +983,10 @@ TABS.settings = () => {
       h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ sound: s.sound }) }, "Save sound"),
         h("button", { class: "btn", onclick: async () => { await saveSettings({ sound: s.sound }, "Saved"); act("test_sound"); } }, "Save & test"))),
     sec("sec-claude", "Claude usage",
+      h("div", { class: "card stack", style: { margin: "0 0 10px" } }, h("b", {}, "Always-on (recommended): run the poller on a home server"),
+        h("p", { class: "small muted", style: { margin: 0 } }, "Updates every 3 minutes whether or not Claude Code is open. On a Linux server signed in to Claude Code (run ", h("code", {}, "claude"), " once), run:"),
+        h("pre", { class: "mono small" }, `curl -fsSLO https://github.com/${get(S.settings, "update.repo", "") || "dethdonald/Desk.Display."}/releases/latest/download/install-usage-poller.sh\nbash install-usage-poller.sh ${get(S.status, "net.ip", "") || location.host} ${get(S.status, "api_token", "") || "YOUR_API_TOKEN"}`),
+        h("p", { class: "small muted", style: { margin: 0 } }, "The status-line method below still works alongside it.")),
       h("p", { class: "muted small" }, "Claude Code's status line already receives your 5-hour and weekly plan limits. A tiny script forwards them here whenever Claude Code refreshes its status line, so the numbers update while you use Claude Code (usage from claude.ai shows up with your next Claude Code message)."),
       h("ol", { class: "small", style: { paddingLeft: "18px", margin: 0 } },
         h("li", {}, "Download ", h("a", { href: SCRIPT_URL(), target: "_blank" }, "deskdisplay-statusline.py"), " (right-click → Save link as) into your ", h("code", {}, ".claude"), " folder: ", h("code", {}, "~/.claude/"), " on Mac/Linux, ", h("code", {}, "C:\\Users\\YOU\\.claude\\"), " on Windows."),
@@ -1025,6 +1030,7 @@ TABS.maint = async () => {
   const st = S.status, n = st.net || {}, b = st.battery || {};
   const rows = [["Firmware", `v${st.version} (${st.build})`], ["Running from", `${st.partition} · ${st.ota_state || ""}`], ["Uptime", fmtDur(st.uptime_s || 0)],
     ["Free memory", `${Math.round(st.heap / 1024)} KB (min ${Math.round(st.heap_min / 1024)} KB) · PSRAM ${Math.round(st.psram / 1024)} KB`],
+    ["Internal RAM", st.ram_internal != null ? `${Math.round(st.ram_internal / 1024)} KB (min ${Math.round(st.ram_internal_min / 1024)} KB)` : "-"],
     ["Network", n.ap ? "Setup network" : `${n.ssid} · ${n.rssi} dBm`], ["Address", `${n.ip} · ${n.host}.local`], ["MAC", n.mac],
     ["Display", st.display ? `${(st.display.fps || 0).toFixed(1)} fps · ${(st.display.mbps || 0).toFixed(1)} MB/s · bus ${Math.round(st.display.bus_busy_pct || 0)}% busy` : "-"],
     ["Power", b.present ? `${b.percent}% · ${b.mv} mV${b.charging ? " · charging" : ""}` : "USB (no battery)"], ["Clock", st.time_valid ? new Date(st.time * 1000).toLocaleString() : "not set yet"]];
@@ -1038,6 +1044,9 @@ TABS.maint = async () => {
   const dataFilter = inp("text", "", drawData, { placeholder: "Filter keys…" });
   el.replaceChildren(h("div", { class: "grid" },
     h("div", { class: "card" }, h("h2", {}, "Status"), h("table", { class: "kv" }, ...rows.map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", {}, v ?? "-"))))),
+    st.last_crash ? h("div", { class: "card stack" }, h("h2", {}, "Last crash"), h("pre", { class: "mono small" }, st.last_crash),
+      h("p", { class: "small muted" }, "Copy this into the chat so the cause can be looked up."),
+      h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => { navigator.clipboard?.writeText(st.last_crash); toast("Copied"); } }, "Copy"))) : null,
     h("div", { class: "card stack" }, h("h2", {}, "Actions"),
       h("div", { class: "row" }, h("button", { class: "btn", onclick: async () => { if (confirm("Restart the display?")) { await api("/api/reboot", { method: "POST" }); toast("Restarting…"); } } }, "Restart"),
         h("button", { class: "btn", onclick: () => act("refresh") }, "Refresh all data")),

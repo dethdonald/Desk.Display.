@@ -88,6 +88,8 @@ static bool previousCrash(String &report) {
   report = buf;
   return true;
 }
+static String s_lastCrash;
+String sysLastCrash() { return s_lastCrash; }
 static uint32_t s_rebootAt = 0;
 static uint32_t s_previewSince = 0;
 static int s_nightSched = -1;          // last scheduled night state (-1 unknown)
@@ -256,6 +258,7 @@ void setup() {
   hwEarlyInit();
   String crash;
   if (previousCrash(crash)) {
+    s_lastCrash = "v" FW_VERSION "\n" + crash;
     LOGI("%s", crash.c_str());
     hwBootText("Crash report", crash.c_str());
     delay(8000);                                 // time to read / photograph it

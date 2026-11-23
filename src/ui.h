@@ -22,6 +22,7 @@ void uiRotate(int quarterTurns, bool animate);      // screen rotation, optional
 int uiPageIndex();
 int uiPageCount();
 String uiPageName(int index);
+bool uiPageStay(int index);                       // page opts out of idle "return home"
 uint16_t uiPageDuration(int index);                // seconds for auto-rotate (0 = use default)
 
 // Display state

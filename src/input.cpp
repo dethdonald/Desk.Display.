@@ -320,7 +320,7 @@ void inputTick() {
     if (c.autoRotate) {
       uint32_t dwell = (uiPageDuration(page) ? uiPageDuration(page) : c.autoDefault) * 1000UL;
       if (now - s_pageSince > dwell && idle > 5000) uiNext();
-    } else if (c.idleHome && idle > c.idleHome) {
+    } else if (c.idleHome && idle > c.idleHome && !uiPageStay(page)) {
       uiHome();
     }
     if (c.sleepAfter && idle > c.sleepAfter) uiSetSleep(true);

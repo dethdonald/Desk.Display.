@@ -313,6 +313,7 @@ static const char DEFAULT_LAYOUT[] = R"JSON({
    "name": "Printer",
    "enabled": false,
    "duration": 20,
+   "stay": true,
    "bg": "#000000",
    "widgets": [
     {
@@ -443,6 +444,7 @@ struct Page {
   std::vector<Widget> widgets;
   String name;
   uint16_t duration = 0;
+  bool stay = false;                            // don't return home from this page when idle
 };
 
 static JsonDocument *s_layout = nullptr;        // backing doc for the live pages
@@ -897,6 +899,7 @@ static bool buildFromDoc(JsonDocument *doc) {
     Page pg;
     pg.name = (const char *)(pj["name"] | "Page");
     pg.duration = pj["duration"] | 0;
+    pg.stay = pj["stay"] | (pg.name == "Printer");
     pg.scr = lv_obj_create(nullptr);
     lv_obj_clear_flag(pg.scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(pg.scr, themeColor(pj["bg"] | "", s_theme.bg), 0);
@@ -1201,6 +1204,7 @@ void uiHome() { if (s_cur != s_home) uiGoto(s_home, s_home < s_cur ? -1 : 1); }
 int uiPageIndex() { return s_cur; }
 int uiPageCount() { return s_pages.size(); }
 String uiPageName(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].name : String(""); }
+bool uiPageStay(int i) { return i >= 0 && i < (int)s_pages.size() && s_pages[i].stay; }
 uint16_t uiPageDuration(int i) { return (i >= 0 && i < (int)s_pages.size()) ? s_pages[i].duration : 0; }
 
 // ---------------------------------------------------------------- display state

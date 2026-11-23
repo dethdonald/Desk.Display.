@@ -50,6 +50,7 @@ jobs:
           mkdir dist
           cp .pio/build/amoled216/firmware.bin dist/deskdisplay-ota.bin
           cp .pio/build/amoled216/firmware.factory.bin dist/deskdisplay-factory.bin
+          cp .pio/build/amoled216/firmware.elf dist/deskdisplay-debug.elf
           cp tools/deskdisplay-statusline.py dist/
           NOTES=$(git log -1 --pretty=%B | grep -vE '^(Co-Authored-By|Claude-Session|Signed-off-by):' | head -c 1500)
           python3 - "$V" "$NOTES" "${{ github.repository }}" <<'PY'
@@ -71,6 +72,9 @@ jobs:
           files: |
             dist/deskdisplay-ota.bin
             dist/deskdisplay-factory.bin
+            dist/deskdisplay-debug.elf
+            tools/claude-usage-poller.py
+            tools/install-usage-poller.sh
             dist/version.json
             dist/deskdisplay-statusline.py
           body: |

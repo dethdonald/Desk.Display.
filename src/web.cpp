@@ -1,4 +1,6 @@
+#include <esp_heap_caps.h>
 #include "web.h"
+String sysLastCrash();
 #include "config.h"
 #include "settings.h"
 #include "datastore.h"
@@ -292,6 +294,9 @@ void webTick() {
   d["heap"] = ESP.getFreeHeap();
   d["heap_min"] = ESP.getMinFreeHeap();
   d["psram"] = ESP.getFreePsram();
+  d["ram_internal"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  d["ram_internal_min"] = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+  d["last_crash"] = sysLastCrash();
   JsonObject n = d["net"].to<JsonObject>();
   n["connected"] = netConnected(); n["ap"] = netApMode(); n["ip"] = netIp(); n["ssid"] = netSsid();
   n["rssi"] = netRssi(); n["host"] = netHostname(); n["mac"] = WiFi.macAddress();
