@@ -227,7 +227,7 @@ static void task(void *) {
     { Lk l; ok = f.seek(fr.off) && f.read(jbuf, fr.size) == fr.size; }
     if (!ok) { Lk l; s_err = "Card read error"; vTaskDelay(pdMS_TO_TICKS(500)); continue; }
     if (!s_jpeg) {
-      void *mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      void *mem = heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 200 * 1024 ? heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) : nullptr;
       if (!mem) mem = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);
       s_jpeg = new (mem) JPEGDEC();
     }

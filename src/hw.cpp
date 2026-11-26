@@ -211,9 +211,9 @@ bool hwInit() {
   lv_color_t *b1 = nullptr, *b2 = nullptr;
   size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-  for (size_t try_lines : {40, 24}) {
+  for (size_t try_lines : {24, 16}) {
     size_t bytes = LCD_W * try_lines * sizeof(lv_color_t);
-    if (largest < bytes || freeInt < 2 * bytes + 150 * 1024) continue;
+    if (largest < bytes || freeInt < 2 * bytes + 260 * 1024) continue;   // Wi-Fi, TCP and timers need the rest
     b1 = (lv_color_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     b2 = (lv_color_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (b1 && b2) { lines = try_lines; break; }

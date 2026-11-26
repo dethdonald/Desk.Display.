@@ -353,7 +353,7 @@ void loop() {
     // spare internal RAM, then rebuild the pages once so they move into it.
     fastMem = true;
     size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    g_lvInternalReserve = 96 * 1024;
+    g_lvInternalReserve = 170 * 1024;   // Wi-Fi bursts need a lot (v1.8.0 crashed at 96 KB)
     lv_mem_buf_free_all();
     uiApplySettings();
     LOGI("ui: pages rebuilt in fast RAM (internal %u -> %u KB free)", (unsigned)(before / 1024),
