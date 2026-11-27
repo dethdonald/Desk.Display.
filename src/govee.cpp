@@ -150,7 +150,15 @@ static void cloudList() {
     return;
   }
   JsonDocument d;
-  DeserializationError je = deserializeJson(d, resp);
+  // Govee's reply nests capability parameters deeper than ArduinoJson's default limit (10);
+  // keep only the fields we use and allow deeper nesting.
+  JsonDocument filter;
+  for (const char *k : {"data", "payload"}) {
+    JsonObject f = k[0] == 'd' ? filter[k][0].to<JsonObject>() : filter[k]["devices"][0].to<JsonObject>();
+    f["device"] = true; f["sku"] = true; f["deviceName"] = true;
+  }
+  filter["code"] = true; filter["message"] = true; filter["msg"] = true;
+  DeserializationError je = deserializeJson(d, resp, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(40));
   LOGI("govee: device list %u bytes: %s", (unsigned)resp.length(), resp.substring(0, 200).c_str());
   if (je) { Lk l; s_lastErr = "Couldn't read Govee's reply (" + String(je.c_str()) + ", " + String(resp.length()) + " bytes)"; return; }
   JsonArray list = d["data"].as<JsonArray>();
