@@ -13,7 +13,8 @@
 void inputInit();
 void inputApplySettings();
 void inputTick();
-void inputTouch(lv_event_code_t code, lv_point_t pt);   // from ui screen events
+void inputTouch(lv_event_code_t code, lv_point_t pt, bool onButton = false);   // from ui screen events
+bool inputPressMoved();                         // current/last press turned into a swipe or woke the screen
 void inputCalibrate();                                  // store current orientation as "rest"
 void inputDoAction(const String &action);
 String inputLastEvent();

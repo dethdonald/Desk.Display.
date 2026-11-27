@@ -18,6 +18,7 @@ void uiNext();
 void uiPrev();
 void uiHome();
 void uiGoto(int index, int dir = 0);
+bool uiGotoName(const String &pageName);
 void uiRotate(int quarterTurns, bool animate);      // screen rotation, optionally with the fade "turn" effect
 int uiPageIndex();
 int uiPageCount();

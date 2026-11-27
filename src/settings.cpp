@@ -25,6 +25,13 @@ static const char DEFAULTS[] = R"JSON({
   },
   "battery": {"capacity_mah": 1000},
   "bambu":   {"enabled": false, "ip": "", "serial": "", "access_code": ""},
+  "govee":   {"enabled": true, "names": {}, "scenes": [
+    {"name": "All on", "color": "#F2C27B", "steps": [{"dev": "all", "power": "on"}]},
+    {"name": "All off", "color": "#2A2A2A", "steps": [{"dev": "all", "power": "off"}]},
+    {"name": "All red 1%", "color": "#C62828", "steps": [{"dev": "all", "power": "on", "color": "#FF0000", "brightness": 1}]},
+    {"name": "Bed blue, desk pink", "color": "#5B4BDB", "steps": [
+      {"dev": "Bedside", "power": "on", "color": "#0050FF", "brightness": 10},
+      {"dev": "Computer side", "power": "on", "color": "#FF2AA0", "brightness": 10}]}]},
   "touch":   {"swap_xy": true, "mirror_x": true, "mirror_y": false},
   "controls": {
     "bindings": {

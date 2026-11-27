@@ -2,6 +2,7 @@
 #include "web.h"
 String sysLastCrash();
 #include "media.h"
+#include "govee.h"
 static bool s_mediaUpOk = false, s_mediaUpActive = false;
 static String s_mediaUpErr;
 #include "config.h"
@@ -236,6 +237,17 @@ void webStart() {
         else { s_uploadErr = Update.errorString(); LOGI("ota: failed: %s", s_uploadErr.c_str()); }
       }
     });
+  // ---- Govee lights (LAN API)
+  s_server.on(AsyncURIMatcher::exact("/api/govee/devices"), HTTP_GET, [](AsyncWebServerRequest *r) {
+    JsonDocument d; goveeDevices(d["devices"].to<JsonArray>()); String s; serializeJson(d, s); sendJson(r, 200, s);
+  }).addMiddleware(&s_auth);
+  s_server.on(AsyncURIMatcher::exact("/api/govee/scan"), HTTP_POST, [](AsyncWebServerRequest *r) { goveeScan(); ok(r); }).addMiddleware(&s_auth);
+  jsonRoute("/api/govee/test", [](AsyncWebServerRequest *r, JsonVariant &j) {
+    if (goveeTest(j["id"] | "")) ok(r); else fail(r, 503, "busy");
+  });
+  jsonRoute("/api/govee/run", [](AsyncWebServerRequest *r, JsonVariant &j) {
+    String err; if (goveeRunScene(j["scene"] | "", err)) ok(r); else fail(r, 400, err);
+  });
   // ---- media on the microSD card
   s_server.on(AsyncURIMatcher::exact("/api/media"), HTTP_GET, [](AsyncWebServerRequest *r) {
     JsonDocument d; mediaStatus(d.to<JsonObject>()); String s; serializeJson(d, s); sendJson(r, 200, s);

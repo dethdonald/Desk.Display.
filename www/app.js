@@ -257,6 +257,13 @@ function renderWidget(p, theme, data) {
     const side = Math.min(W, H) - 2 * pad - 8;
     box.append(h("div", { style: { width: side + "px", height: side + "px", background: "#fff", padding: "4px" } },
       h("div", { style: { width: "100%", height: "100%", background: "repeating-conic-gradient(#000 0 25%, #fff 0 50%) 0 0/16px 16px" } })));
+  } else if (t === "button") {
+    const gap = p.gap ?? 6;
+    Object.assign(box.style, { left: (p.x || 0) * 40 + gap + "px", top: (p.y || 0) * 40 + gap + "px", width: W - 2 * gap + "px", height: H - 2 * gap + "px" });
+    box.style.background = tcol(p.bg || "accent", theme, theme.accent); box.style.borderRadius = (p.radius ?? 22) + "px";
+    box.style.display = "flex"; box.style.flexDirection = "column";
+    box.append(lbl(renderTmpl(p.label || "", data), size, fg, { width: "100%", textAlign: "center", fontWeight: 600 }));
+    if (p.sub) box.append(lbl(renderTmpl(p.sub, data), p.sub_size ?? 16, fg, { width: "100%", textAlign: "center", opacity: .7 }));
   } else if (t === "media") {
     if (p.file) {
       const mf = ((Media.list && Media.list.files) || []).find(f => f.name === p.file);
@@ -627,6 +634,7 @@ const WIDGETS = {
   icon:     { label: "Icon", def: { w: 2, h: 2, glyph: "", size: 64, color: "fg" } },
   box:      { label: "Box / panel", def: { w: 6, h: 3, bg: "track", radius: 16 } },
   qr:       { label: "Settings QR", def: { w: 4, h: 4 } },
+  button:   { label: "Button", def: { w: 6, h: 3, label: "Button", action: "", bg: "#5B4BDB", color: "#FFFFFF", radius: 22, size: 28 } },
   media:    { label: "Picture / video", def: { x: 0, y: 0, w: 12, h: 12, file: "" } },
 };
 const COLOR_OPTS = [["fg", "Text"], ["muted", "Muted"], ["accent", "Accent"], ["ok", "OK"], ["warn", "Warning"], ["bad", "Alert"], ["track", "Track"], ["bg", "Background"], ["custom", "Custom…"]];
@@ -659,6 +667,7 @@ function propSchema(t) {
     weather: [["icon_size", "Icon size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], size, ["style", "Arrangement", [["row", "Side by side"], ["stack", "Stacked"]]], ["show_desc", "Show conditions", "bool"], ["desc_size", "Conditions size", "font"], ["show_unit", "Show °F/°C letter", "bool"], color, ["icon_color", "Icon color", "color"]],
     forecast: [["mode", "Mode", [["daily", "Daily"], ["hourly", "Hourly"]]], ["count", "Columns", "num"], ["step", "Hours between (hourly)", "num"], ["icon_size", "Icon size", [[32, "Small"], [64, "Medium"]]], size, color, ["show_wind", "Show wind speed (daily)", "bool"], ["wind_size", "Wind text size", "font"]],
     icon: [["glyph", "Icon", "glyph"], ["key", "…or from data key", "key"], ["size", "Size", [[32, "Small"], [64, "Medium"], [128, "Large"]]], color],
+    button: [["label", "Label (template)", "tmpl1"], ["sub", "Small text (template)", "tmpl1"], ["action", "When tapped", "action"], size, color, ["bg", "Button color", "color"]],
     box: [], qr: [], media: [["file", "File on the microSD card", "mediafile"]],
   };
   return S_[t] || [];
@@ -906,6 +915,7 @@ function propsPanel() {
     else if (kind === "font") input = sel(FONT_SIZES.map(s => [s, s + " px" + (s >= 96 ? " (digits only)" : "")]), nearestFont(w[k] ?? (k === "size" ? 24 : 16)), v => { snap(); change(k, +v); });
     else if (kind === "color") input = colorField(w[k] || "", v => { snap(); change(k, v); }, k === "bg" || k === "ampm_color" || k === "icon_color");
     else if (kind === "key") input = keyField(w[k] || "", v => change(k, v));
+    else if (kind === "action") input = sel(buttonActions().some(a => a[0] === (w[k] || "")) ? buttonActions() : [...buttonActions(), [w[k], w[k]]], w[k] || "", v => { snap(); change(k, v); });
     else if (kind === "mediafile") input = mediaFileField(w[k] || "", v => { snap(); change(k, v); });
     else if (kind === "glyph") input = sel(Object.entries(WX_GLYPHS).map(([n, g]) => [g, n]), w[k] || "", v => { snap(); change(k, v); });
     else if (kind === "datefmt") { const t = inp("text", w[k] || "%A, %b %e", v => change(k, v), { onfocus: snap }); input = h("div", { class: "stack" }, t, sel([["", "Presets…"], ...DATE_PRESETS], "", v => { if (v) { snap(); t.value = v; change(k, v); } }), h("span", { class: "small muted" }, "%A weekday · %a short · %B month · %b short · %e day · %Y year · %H:%M time")); }
@@ -985,20 +995,92 @@ async function presetPage(name) {
   const pg = (def.pages || []).find(p => p.name === name);
   return pg ? clone(pg) : null;
 }
-async function addPrinterPageToDevice() {
+async function addPresetPageToDevice(name) {
   try {
     const lay = await api("/api/layout");
-    let pg = lay.pages.find(p => p.name === "Printer");
+    let pg = lay.pages.find(p => p.name === name);
     if (pg) pg.enabled = true;
-    else { pg = await presetPage("Printer"); if (!pg) throw new Error("preset missing"); pg.enabled = true; lay.pages.push(pg); }
+    else { pg = await presetPage(name); if (!pg) throw new Error("preset missing"); pg.enabled = true; lay.pages.push(pg); }
     await api("/api/layout", { body: lay });
     S.layout = lay; Editor.layout = null;
-    toast("Printer page added to the display");
+    toast(`${name} page added to the display`);
+  } catch (e) { toast("Couldn't add the page: " + e.message, true); }
+}
+const addPrinterPageToDevice = () => addPresetPageToDevice("Printer");
+
+// ---- Govee lights settings
+function goveeSection(s, sec) {
+  if (!s.govee) s.govee = { enabled: true, names: {}, scenes: [] };
+  const g = s.govee; g.names = g.names || {}; g.scenes = g.scenes || [];
+  const lightsBox = h("div", { class: "stack" }, h("span", { class: "small muted" }, "Looking for lights…"));
+  const scenesBox = h("div", { class: "stack" });
+  let found = [];
+  const devOptions = () => [["all", "All lights"], ...found.map(d => [g.names[d.id] || d.id, g.names[d.id] ? g.names[d.id] : `${d.sku} (${d.ip}) — name it above`]),
+    ...[...new Set(g.scenes.flatMap(sc => (sc.steps || []).map(st => st.dev)))].filter(n => n && n !== "all" && !found.some(d => (g.names[d.id] || d.id) === n)).map(n => [n, n + " (not found yet)"])];
+  const drawLights = () => {
+    lightsBox.replaceChildren(...(found.length ? found.map(d => h("div", { class: "list-item" },
+      h("span", { class: "grow" }, h("b", {}, d.sku || "Govee light"), h("span", { class: "small muted" }, " " + d.ip)),
+      inp("text", g.names[d.id] || "", v => { g.names[d.id] = v.trim(); drawScenes(); }, { placeholder: "Name, e.g. Bedside", style: { maxWidth: "190px" } }),
+      h("button", { class: "btn sm", title: "Blink it twice", onclick: () => api("/api/govee/test", { body: { id: d.id } }).then(() => toast("Blinking…")).catch(e => toast(e.message, true)) }, "Blink")))
+      : [h("p", { class: "small muted", style: { margin: 0 } }, "No lights answered. In the Govee Home app open each light → settings (gear) → turn on LAN Control, then press Search again. The display and the lights must be on the same Wi-Fi.")]));
+  };
+  const load = async (scanFirst) => {
+    if (scanFirst) { lightsBox.replaceChildren(h("span", { class: "small muted" }, "Searching…")); await api("/api/govee/scan", { method: "POST" }).catch(() => { }); await sleep(2600); }
+    try { found = (await api("/api/govee/devices")).devices || []; } catch { found = []; }
+    drawLights(); drawScenes();
+  };
+  const drawScenes = () => {
+    scenesBox.replaceChildren(...g.scenes.map((sc, i) => h("div", { class: "card stack", style: { background: "#ffffff06" } },
+      h("div", { class: "row" }, inp("text", sc.name, v => sc.name = v, { style: { flex: 1 } }), inp("color", sc.color || "#5B4BDB", v => sc.color = v.toUpperCase(), { title: "Button color" }),
+        h("button", { class: "btn sm", onclick: () => api("/api/govee/run", { body: { scene: sc.name } }).then(() => toast("Sent: " + sc.name)).catch(e => toast(e.message + " (save first if you just changed it)", true)) }, "Try"),
+        h("button", { class: "btn sm danger", onclick: () => { g.scenes.splice(i, 1); drawScenes(); } }, "✕")),
+      ...(sc.steps || []).map((st, k) => h("div", { class: "row", style: { flexWrap: "wrap" } },
+        Object.assign(sel(devOptions(), st.dev || "all", v => st.dev = v), { style: "flex: 1 1 150px; width: auto" }),
+        Object.assign(sel([["on", "Turn on"], ["off", "Turn off"], ["", "Leave on/off"]], st.power ?? "on", v => { st.power = v; drawScenes(); }), { style: "flex: 0 1 130px; width: auto" }),
+        st.power === "off" ? null : h("label", { class: "row small", style: { gap: "4px" } }, h("input", { type: "checkbox", checked: !!st.color, onchange: e => { st.color = e.target.checked ? (st.color || "#FFFFFF") : ""; drawScenes(); } }), "color",
+          st.color ? inp("color", st.color, v => st.color = v.toUpperCase()) : null),
+        st.power === "off" ? null : h("label", { class: "row small", style: { gap: "4px" } }, "brightness",
+          inp("number", st.brightness ?? "", v => { if (v === "" || v == null || isNaN(v)) delete st.brightness; else st.brightness = Math.max(1, Math.min(100, +v)); }, { min: 1, max: 100, placeholder: "—", style: { width: "70px" } }), "%"),
+        h("button", { class: "btn sm icon", title: "Remove", onclick: () => { sc.steps.splice(k, 1); drawScenes(); } }, "−"))),
+      h("div", {}, h("button", { class: "btn sm", onclick: () => { (sc.steps = sc.steps || []).push({ dev: "all", power: "on" }); drawScenes(); } }, "+ Light")))),
+      h("div", { class: "row" }, h("button", { class: "btn sm", onclick: () => { g.scenes.push({ name: "Scene " + (g.scenes.length + 1), color: "#5B4BDB", steps: [{ dev: "all", power: "on" }] }); drawScenes(); } }, "+ Scene")));
+  };
+  load(false);
+  return sec("sec-govee", "Govee lights",
+    h("p", { class: "small muted" }, "Controls Govee lights directly over your home network — no account needed. Each light needs LAN Control turned on in the Govee Home app (light → settings gear)."),
+    check("Enabled", g.enabled !== false, v => g.enabled = v),
+    h("div", { class: "row between" }, h("h3", { style: { margin: 0 } }, "Lights found"), h("button", { class: "btn sm", onclick: () => load(true) }, "Search again")),
+    lightsBox,
+    h("h3", {}, "Scenes (buttons on the Lights page)"),
+    h("p", { class: "small muted", style: { margin: 0 } }, "Scenes use the names you give the lights above. Brightness is 1–100%; leave it empty to keep the current level."),
+    scenesBox,
+    h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ govee: g }) }, "Save lights"),
+      h("button", { class: "btn", onclick: addLightsPage }, "Add Lights page to my layout")));
+}
+async function addLightsPage() {
+  // Build the page from the current scenes (up to 4 big buttons, 6 as smaller ones).
+  const sc = (get(S.settings, "govee.scenes", []) || []).slice(0, 6);
+  if (!sc.length) return toast("Add a scene first", true);
+  const light = c => { const n = parseInt((c || "#000000").slice(1), 16); return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150; };
+  const cols = 2, rows = Math.ceil(sc.length / cols), cw = 12 / cols, ch = Math.floor(12 / rows);
+  const pg = { name: "Lights", enabled: true, duration: 20, stay: true, bg: "#000000", widgets: sc.map((x, i) => ({
+    type: "button", x: (i % cols) * cw, y: Math.floor(i / cols) * ch, w: cw, h: ch, label: x.name, action: "govee:" + x.name,
+    bg: x.color || "#5B4BDB", color: light(x.color) ? "#1A1A1A" : "#FFFFFF", radius: 28, size: rows > 2 ? 24 : 30 })) };
+  try {
+    const lay = await api("/api/layout");
+    const i = lay.pages.findIndex(p => p.name === "Lights");
+    if (i >= 0) lay.pages[i] = pg; else lay.pages.push(pg);
+    await api("/api/layout", { body: lay });
+    S.layout = lay; Editor.layout = null;
+    toast("Lights page is on the display");
   } catch (e) { toast("Couldn't add the page: " + e.message, true); }
 }
 
 // ============================================================ CONTROLS
 const ACTIONS = [["next", "Next page"], ["prev", "Previous page"], ["home", "Go to home page"], ["sleep_toggle", "Sleep / wake screen"], ["night_toggle", "Night mode on/off"], ["show_qr", "Show settings QR"], ["refresh", "Refresh data"]];
+const buttonActions = () => [["", "Choose…"], ...ACTIONS,
+  ...(get(S.settings, "govee.scenes", []) || []).map(sc => ["govee:" + sc.name, "Lights: " + sc.name]),
+  ...((Editor.layout || S.layout || { pages: [] }).pages || []).map(p => ["goto:" + p.name, "Go to page: " + p.name])];
 const EVENTS = {
   Touch: [["tap", "Tap"], ["double_tap", "Double tap"], ["long_press", "Long press"], ["swipe_left", "Swipe left"], ["swipe_right", "Swipe right"], ["swipe_up", "Swipe up"], ["swipe_down", "Swipe down"], ["edge_tap_left", "Tap left edge"], ["edge_tap_right", "Tap right edge"]],
   Motion: [["tilt_left", "Tilt left"], ["tilt_right", "Tilt right"], ["tilt_forward", "Tilt forward"], ["tilt_back", "Tilt back"], ["shake", "Shake"], ["flip", "Flip face-down"], ["pickup", "Pick up"]],
@@ -1220,6 +1302,7 @@ TABS.settings = () => {
         : h("b", { style: { color: "var(--warn)" } }, S.data["bambu.error"] || "not connected")),
       h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => saveSettings({ bambu: s.bambu }) }, "Save printer"),
         h("button", { class: "btn", onclick: addPrinterPageToDevice }, "Add printer page to my layout"))),
+    goveeSection(s, sec),
     sec("sec-battery", "Battery",
       h("p", { class: "small muted" }, "Set this to the capacity printed on your battery. The display charges at half that rate (0.5C), which is gentle on small cells."),
       field("Battery capacity (mAh)", inp("number", get(s, "battery.capacity_mah", 1000), v => set(s, "battery.capacity_mah", v), { min: 100, max: 5000 }),

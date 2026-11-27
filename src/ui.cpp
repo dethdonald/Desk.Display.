@@ -499,6 +499,69 @@ static const char DEFAULT_LAYOUT[] = R"JSON({
     "text": "{weather.temp:0}° {weather.desc}  ·  Claude updated {claude.updated|ago}"
    }
   ]
+ },
+ {
+  "name": "Lights",
+  "enabled": false,
+  "duration": 20,
+  "stay": true,
+  "bg": "#000000",
+  "widgets": [
+   {
+    "type": "button",
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 6,
+    "label": "All on",
+    "action": "govee:All on",
+    "bg": "#F2C27B",
+    "radius": 28,
+    "size": 30,
+    "color": "#2A1A00"
+   },
+   {
+    "type": "button",
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 6,
+    "label": "All off",
+    "action": "govee:All off",
+    "bg": "#2A2A2A",
+    "radius": 28,
+    "size": 30,
+    "color": "#FFFFFF"
+   },
+   {
+    "type": "button",
+    "x": 0,
+    "y": 6,
+    "w": 6,
+    "h": 6,
+    "label": "All red",
+    "action": "govee:All red 1%",
+    "bg": "#C62828",
+    "radius": 28,
+    "size": 30,
+    "color": "#FFFFFF",
+    "sub": "1%"
+   },
+   {
+    "type": "button",
+    "x": 6,
+    "y": 6,
+    "w": 6,
+    "h": 6,
+    "label": "Bed blue",
+    "action": "govee:Bed blue, desk pink",
+    "bg": "#5B4BDB",
+    "radius": 28,
+    "size": 30,
+    "color": "#FFFFFF",
+    "sub": "Desk pink · 10%"
+   }
+  ]
  }
  ]
 })JSON";
@@ -634,6 +697,13 @@ static String keyOf(JsonObjectConst p) { return String((const char *)(p["key"] |
 
 
 // ---------------------------------------------------------------- widget builders
+static void buttonClickCb(lv_event_t *e) {
+  if (inputPressMoved()) return;                 // it was a swipe that started on the button
+  const char *act = (const char *)lv_event_get_user_data(e);
+  if (!act || !*act) return;
+  soundPlay(SND_PAGE);
+  inputDoAction(act);
+}
 static void buildWidget(Page &pg, JsonObjectConst p) {
   Widget w;
   w.type = (const char *)(p["type"] | "text");
@@ -645,8 +715,10 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
   int W = gw * CELL_PX, H = gh * CELL_PX;
 
   w.box = plainObj(pg.canvas);
-  lv_obj_set_pos(w.box, gx * CELL_PX, gy * CELL_PX);
-  lv_obj_set_size(w.box, W, H);
+  int inset = w.type == "button" ? (int)(p["gap"] | 6) : 0;    // buttons keep a small gap between tiles
+  lv_obj_set_pos(w.box, gx * CELL_PX + inset, gy * CELL_PX + inset);
+  lv_obj_set_size(w.box, W - 2 * inset, H - 2 * inset);
+  W -= 2 * inset; H -= 2 * inset;
   const char *bg = p["bg"] | "";
   if (bg[0]) {
     lv_obj_set_style_bg_color(w.box, themeColor(bg, s_theme.track), 0);
@@ -805,6 +877,32 @@ static void buildWidget(Page &pg, JsonObjectConst p) {
     lv_obj_set_style_border_color(w.d, lv_color_white(), 0);
     lv_obj_set_style_border_width(w.d, 4, 0);
     lv_obj_center(w.d);
+  } else if (w.type == "button") {
+    // A tappable tile that runs an action (lights scene, go to page, ...). Swipes that start on it
+    // still change pages because the touch events bubble to the screen.
+    lv_obj_add_flag(w.box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_color_t bg = parseHex(p["bg"] | "", s_theme.accent);
+    if (!p["bg"].is<const char *>()) { lv_obj_set_style_bg_color(w.box, bg, 0); lv_obj_set_style_bg_opa(w.box, LV_OPA_COVER, 0); }
+    if (!p["radius"].is<int>()) lv_obj_set_style_radius(w.box, 22, 0);
+    lv_obj_set_style_bg_color(w.box, lv_color_darken(bg, 90), LV_STATE_PRESSED);
+    lv_obj_set_style_transform_width(w.box, -4, LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(w.box, -4, LV_STATE_PRESSED);
+    w.a = mkLabel(w.box, p["size"] | 28, themeColor(p["color"] | "#FFFFFF", lv_color_white()));
+    lv_obj_set_width(w.a, W - 2 * pad - 8);
+    lv_label_set_long_mode(w.a, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(w.a, LV_TEXT_ALIGN_CENTER, 0);
+    const char *sub = p["sub"] | "";
+    if (*sub) {
+      w.b = mkLabel(w.box, p["sub_size"] | 16, themeColor(p["sub_color"] | "#FFFFFFB0", lv_color_white()));
+      lv_obj_set_style_text_opa(w.b, LV_OPA_70, 0);
+      lv_obj_set_width(w.b, W - 2 * pad - 8);
+      lv_obj_set_style_text_align(w.b, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_align(w.a, LV_ALIGN_CENTER, 0, -12);
+      lv_obj_align(w.b, LV_ALIGN_CENTER, 0, 22);
+    } else lv_obj_center(w.a);
+    char *act = strdup(p["action"] | "");
+    lv_obj_add_event_cb(w.box, buttonClickCb, LV_EVENT_CLICKED, act);
+    lv_obj_add_event_cb(w.box, [](lv_event_t *e) { free(lv_event_get_user_data(e)); }, LV_EVENT_DELETE, act);
   } else if (w.type == "media") {
     w.d = lv_img_create(w.box);                         // frames are set by media.cpp
     lv_obj_center(w.d);
@@ -983,7 +1081,9 @@ static void screenEventCb(lv_event_t *e) {
   lv_indev_t *indev = lv_indev_get_act();
   lv_point_t pt = {0, 0};
   if (indev) lv_indev_get_point(indev, &pt);
-  inputTouch(lv_event_get_code(e), pt);
+  lv_obj_t *t = lv_event_get_target(e);
+  bool onButton = t != lv_event_get_current_target(e) && lv_obj_has_flag(t, LV_OBJ_FLAG_CLICKABLE);
+  inputTouch(lv_event_get_code(e), pt, onButton);
 }
 
 // Bring a page's widgets up to date; drop its cached picture if anything visible changed.
@@ -1306,6 +1406,11 @@ static void dip(DipAction act, int arg, int ms) {
   lv_anim_start(&a);
 }
 
+bool uiGotoName(const String &name) {
+  for (size_t i = 0; i < s_pages.size(); i++)
+    if (s_pages[i].name.equalsIgnoreCase(name)) { uiGoto(i, i > (size_t)s_cur ? 1 : -1); return true; }
+  return false;
+}
 void uiGoto(int index, int dir) {
   int n = s_pages.size();
   if (n == 0) return;

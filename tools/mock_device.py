@@ -103,6 +103,9 @@ class H(BaseHTTPRequestHandler):
                           "pitch": random.uniform(-3, 3), "angle": 2.1, "motion_g": 0.01, "imu": True},
                 "time": int(time.time()), "time_valid": True, "display": {"fps": 31.5, "mbps": 13.2, "bus_busy_pct": 64}, "sound": "ready", "partition": "app0", "ota_state": "valid",
                 "has_admin_pass": bool(SETTINGS["admin"]["pass"]), "api_token": SETTINGS["api"]["token"]})
+        if p == "/api/govee/devices":
+            return self.send(200, {"devices": [{"id": "AA:BB:CC:DD:EE:FF:00:11", "sku": "H6008", "ip": "192.168.1.61", "name": SETTINGS.get("govee", {}).get("names", {}).get("AA:BB:CC:DD:EE:FF:00:11", ""), "age_s": 12},
+                                               {"id": "AA:BB:CC:DD:EE:FF:00:22", "sku": "H6008", "ip": "192.168.1.62", "name": "", "age_s": 12}]})
         if p == "/api/media":
             files = []
             for nm, data in MEDIA.items():

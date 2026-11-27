@@ -19,6 +19,7 @@
 #include "sound.h"
 #include "bambu.h"
 #include "media.h"
+#include "govee.h"
 #include <esp_heap_caps.h>
 #include <mbedtls/platform.h>
 
@@ -183,6 +184,7 @@ static void applyAllSettings() {
   netApplySettings();
   fetcherApplySettings();
   bambuApplySettings();
+  goveeApplySettings();
   inputApplySettings();
   soundApplySettings();
   webApplySettings();
@@ -316,6 +318,7 @@ void setup() {
   sysKeysTick();
   fetcherStart();
   bambuStart();
+  goveeStart();
   mediaInit();
   bootStep("web", false);
   webApplySettings();

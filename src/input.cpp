@@ -6,6 +6,7 @@
 #include "config.h"
 #include "sound.h"
 #include "datastore.h"
+#include "govee.h"
 #include <map>
 #include <vector>
 
@@ -132,6 +133,10 @@ void inputDoAction(const String &a) {
   else if (a == "night_toggle") sysToggleNight();
   else if (a == "show_qr") { String u = sysSettingsUrl(); uiShowQr(u, "Scan to open settings\n" + u); }
   else if (a == "refresh") { sysRefreshData(); uiToast("Refreshing data"); }
+  else if (a.startsWith("govee:")) {
+    String err, scene = a.substring(6);
+    if (goveeRunScene(scene, err)) uiToast("Lights: " + scene, 1200); else uiToast(err, 3000);
+  } else if (a.startsWith("goto:")) uiGotoName(a.substring(5));
 }
 
 static bool isWakeEvent(const String &ev) {
@@ -165,10 +170,12 @@ static void emitTap(lv_point_t pt) {
   else emit("tap");
 }
 
-void inputTouch(lv_event_code_t code, lv_point_t pt) {
+static bool s_pressOnButton = false, s_pressWoke = false;
+bool inputPressMoved() { return s_moved || s_pressWoke; }
+void inputTouch(lv_event_code_t code, lv_point_t pt, bool onButton) {
   uint32_t now = millis();
   if (code == LV_EVENT_PRESSED) {
-    s_pressing = true; s_moved = false; s_longFired = false;
+    s_pressing = true; s_moved = false; s_longFired = false; s_pressOnButton = onButton; s_pressWoke = uiSleeping();
     s_pressPt = s_lastPt = pt; s_pressMs = now;
     s_lastActivity = now;
   } else if (code == LV_EVENT_PRESSING) {
@@ -185,6 +192,7 @@ void inputTouch(lv_event_code_t code, lv_point_t pt) {
       return;
     }
     if (s_moved) return;
+    if (s_pressOnButton && !uiSleeping()) { s_lastTapMs = now; return; }   // the button handles it
     if (bound("double_tap") && !uiSleeping()) {
       if (s_pendingTap && now - s_pendingTapMs < c.dblMs) { s_pendingTap = false; emit("double_tap"); }
       else { s_pendingTap = true; s_pendingTapMs = now; s_pendingPt = s_pressPt; }
@@ -299,7 +307,7 @@ void inputTick() {
   uint32_t now = millis();
 
   // touch: long press + delayed single tap (when double-tap is bound)
-  if (s_pressing && !s_moved && !s_longFired && now - s_pressMs > c.longMs) { s_longFired = true; emit("long_press"); }
+  if (s_pressing && !s_moved && !s_longFired && !s_pressOnButton && now - s_pressMs > c.longMs) { s_longFired = true; emit("long_press"); }
   if (s_pendingTap && now - s_pendingTapMs > c.dblMs) { s_pendingTap = false; emitTap(s_pendingPt); }
 
   // BOOT button
