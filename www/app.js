@@ -1015,14 +1015,15 @@ function goveeSection(s, sec) {
   const lightsBox = h("div", { class: "stack" }, h("span", { class: "small muted" }, "Looking for lights…"));
   const scenesBox = h("div", { class: "stack" });
   let found = [];
-  const devOptions = () => [["all", "All lights"], ...found.map(d => [g.names[d.id] || d.id, g.names[d.id] ? g.names[d.id] : `${d.sku} (${d.ip}) — name it above`]),
-    ...[...new Set(g.scenes.flatMap(sc => (sc.steps || []).map(st => st.dev)))].filter(n => n && n !== "all" && !found.some(d => (g.names[d.id] || d.id) === n)).map(n => [n, n + " (not found yet)"])];
+  const nm = d => g.names[d.id] || d.cloud_name || "";
+  const devOptions = () => [["all", "All lights"], ...found.map(d => [nm(d) || d.id, nm(d) || `${d.sku} (${d.ip}) — name it above`]),
+    ...[...new Set(g.scenes.flatMap(sc => (sc.steps || []).map(st => st.dev)))].filter(n => n && n !== "all" && !found.some(d => (nm(d) || d.id) === n || d.cloud_name === n)).map(n => [n, n + " (not found yet)"])];
   const drawLights = () => {
     lightsBox.replaceChildren(...(found.length ? found.map(d => h("div", { class: "list-item" },
-      h("span", { class: "grow" }, h("b", {}, d.sku || "Govee light"), h("span", { class: "small muted" }, " " + d.ip)),
-      inp("text", g.names[d.id] || "", v => { g.names[d.id] = v.trim(); drawScenes(); }, { placeholder: "Name, e.g. Bedside", style: { maxWidth: "190px" } }),
+      h("span", { class: "grow" }, h("b", {}, d.cloud_name || d.sku || "Govee light"), h("span", { class: "small muted" }, ` ${d.sku}${d.ip ? " · " + d.ip : ""} · via ${d.via}`)),
+      inp("text", g.names[d.id] || "", v => { g.names[d.id] = v.trim(); drawScenes(); }, { placeholder: d.cloud_name ? "Rename (optional)" : "Name, e.g. Bedside", style: { maxWidth: "170px" } }),
       h("button", { class: "btn sm", title: "Blink it twice", onclick: () => api("/api/govee/test", { body: { id: d.id } }).then(() => toast("Blinking…")).catch(e => toast(e.message, true)) }, "Blink")))
-      : [h("p", { class: "small muted", style: { margin: 0 } }, "No lights answered. In the Govee Home app open each light → settings (gear) → turn on LAN Control, then press Search again. The display and the lights must be on the same Wi-Fi.")]));
+      : [h("p", { class: "small muted", style: { margin: 0 } }, g.api_key ? "No lights yet. Save the API key, then press Search again." : "No lights found. Add your Govee API key above (or turn on LAN Control for lights that have it), save, then press Search again.")]));
   };
   const load = async (scanFirst) => {
     if (scanFirst) { lightsBox.replaceChildren(h("span", { class: "small muted" }, "Searching…")); await api("/api/govee/scan", { method: "POST" }).catch(() => { }); await sleep(2600); }
@@ -1047,8 +1048,9 @@ function goveeSection(s, sec) {
   };
   load(false);
   return sec("sec-govee", "Govee lights",
-    h("p", { class: "small muted" }, "Controls Govee lights directly over your home network — no account needed. Each light needs LAN Control turned on in the Govee Home app (light → settings gear)."),
+    h("p", { class: "small muted" }, "Lights with LAN Control are switched directly over your network. Others go through Govee's cloud with your API key — the same key your PC screen-sync app uses (its Sync tab), or get one in the Govee Home app: Profile → Settings → Apply for API Key. Govee allows about 10 commands a minute per light."),
     check("Enabled", g.enabled !== false, v => g.enabled = v),
+    field("Govee API key", inp("password", g.api_key || "", v => g.api_key = v.trim(), { autocomplete: "off", placeholder: "paste the key from the Govee email" })),
     h("div", { class: "row between" }, h("h3", { style: { margin: 0 } }, "Lights found"), h("button", { class: "btn sm", onclick: () => load(true) }, "Search again")),
     lightsBox,
     h("h3", {}, "Scenes (buttons on the Lights page)"),

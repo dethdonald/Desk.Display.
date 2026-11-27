@@ -104,8 +104,8 @@ class H(BaseHTTPRequestHandler):
                 "time": int(time.time()), "time_valid": True, "display": {"fps": 31.5, "mbps": 13.2, "bus_busy_pct": 64}, "sound": "ready", "partition": "app0", "ota_state": "valid",
                 "has_admin_pass": bool(SETTINGS["admin"]["pass"]), "api_token": SETTINGS["api"]["token"]})
         if p == "/api/govee/devices":
-            return self.send(200, {"devices": [{"id": "AA:BB:CC:DD:EE:FF:00:11", "sku": "H6008", "ip": "192.168.1.61", "name": SETTINGS.get("govee", {}).get("names", {}).get("AA:BB:CC:DD:EE:FF:00:11", ""), "age_s": 12},
-                                               {"id": "AA:BB:CC:DD:EE:FF:00:22", "sku": "H6008", "ip": "192.168.1.62", "name": "", "age_s": 12}]})
+            return self.send(200, {"devices": [{"id": "C9:11:D0:C9:07:6C:4C:BA", "sku": "H6008", "ip": "", "name": "", "cloud_name": "Bedside Bulb", "via": "cloud", "age_s": 12},
+                                               {"id": "B2:D7:D0:C9:07:6D:B0:5E", "sku": "H6008", "ip": "", "name": "", "cloud_name": "Bedroom Bulb", "via": "cloud", "age_s": 12}]})
         if p == "/api/media":
             files = []
             for nm, data in MEDIA.items():

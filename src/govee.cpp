@@ -3,10 +3,12 @@
 #include "logbuf.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <HTTPClient.h>
+#include <NetworkClientSecure.h>
 #include <vector>
 #include <map>
 
-struct Light { String id, sku, ip; uint32_t seenMs = 0; };
+struct Light { String id, sku, ip, cloudName; bool cloud = false; uint32_t seenMs = 0; };   // ip set = LAN reachable
 struct Step { String dev; int power = -1; bool hasColor = false; uint8_t r = 0, g = 0, b = 0; int bright = -1; };
 struct Scene { String name; std::vector<Step> steps; };
 
@@ -17,6 +19,10 @@ static std::vector<Light> s_lights;                       // guarded by s_mtx
 static std::vector<Scene> s_scenes;                       // guarded by s_mtx
 static std::map<String, String> s_names;                  // light id -> friendly name
 static bool s_enabled = true;
+static String s_apiKey;                                   // Govee cloud API key (for lights without LAN Control)
+static String s_lastErr;
+static String s_pendingToast;
+static uint32_t s_cloudListAt = 0;
 static QueueHandle_t s_q = nullptr;                       // jobs for the task
 static WiFiUDP s_udp;
 static bool s_udpOpen = false;
@@ -37,6 +43,8 @@ void goveeApplySettings() {
   JsonObject g = S("govee");
   Lk l;
   s_enabled = g["enabled"] | true;
+  String key = (const char *)(g["api_key"] | ""); key.trim();
+  if (key != s_apiKey) { s_apiKey = key; s_cloudListAt = 0; }
   s_names.clear();
   for (JsonPair kv : g["names"].as<JsonObject>()) s_names[kv.key().c_str()] = (const char *)(kv.value() | "");
   s_scenes.clear();
@@ -85,7 +93,7 @@ static void pollReplies() {
     if (li.ip.isEmpty() || li.id.isEmpty()) continue;
     Lk l;
     bool found = false;
-    for (auto &e : s_lights) if (e.id == li.id) { e = li; found = true; }
+    for (auto &e : s_lights) if (e.id == li.id) { e.ip = li.ip; e.sku = li.sku; e.seenMs = li.seenMs; found = true; }
     if (!found) { s_lights.push_back(li); LOGI("govee: found %s (%s) at %s", li.sku.c_str(), li.id.c_str(), li.ip.c_str()); }
   }
 }
@@ -105,34 +113,111 @@ static void doScan(uint32_t waitMs) {
   s_lastScan = millis();
 }
 
-// Which lights a step addresses: "all", a friendly name, or a device id.
-static std::vector<String> targets(const String &dev) {
-  std::vector<String> ips;
+// ---- Govee cloud API (openapi.api.govee.com), same calls as the PC screen-sync app.
+// Limited by Govee to ~10 commands per minute per light, so it's for button presses, not effects.
+static const char *CLOUD = "https://openapi.api.govee.com/router/api/v1";
+
+static int cloudCall(const char *method, const String &path, const String &body, String &resp) {
+  String key; { Lk l; key = s_apiKey; }
+  if (key.isEmpty()) return -1;
+  NetworkClientSecure tls;
+  tls.setInsecure();
+  HTTPClient http;
+  http.setTimeout(8000);
+  if (!http.begin(tls, String(CLOUD) + path)) return -1;
+  http.addHeader("Govee-API-Key", key);
+  http.addHeader("Content-Type", "application/json");
+  int code = !strcmp(method, "GET") ? http.GET() : http.POST(body);
+  resp = code > 0 ? http.getString() : "";
+  http.end();
+  return code;
+}
+
+static void cloudList() {
+  String resp;
+  int code = cloudCall("GET", "/user/devices", "", resp);
+  s_cloudListAt = millis();
+  if (code != 200) { Lk l; s_lastErr = code == 401 ? "Govee rejected the API key" : "Govee cloud: HTTP " + String(code); LOGI("govee: device list failed (%d)", code); return; }
+  JsonDocument d;
+  if (deserializeJson(d, resp)) return;
+  Lk l;
+  s_lastErr = "";
+  for (JsonObject x : d["data"].as<JsonArray>()) {
+    String id = (const char *)(x["device"] | "");
+    if (id.isEmpty()) continue;
+    bool found = false;
+    for (auto &e : s_lights) if (e.id == id) { e.cloud = true; e.cloudName = (const char *)(x["deviceName"] | ""); e.sku = (const char *)(x["sku"] | ""); found = true; }
+    if (!found) {
+      Light li; li.id = id; li.sku = (const char *)(x["sku"] | ""); li.cloudName = (const char *)(x["deviceName"] | ""); li.cloud = true; li.seenMs = millis();
+      s_lights.push_back(li);
+      LOGI("govee: cloud light %s (%s)", li.cloudName.c_str(), li.sku.c_str());
+    }
+  }
+}
+
+static bool cloudControl(const Light &li, const char *type, const char *instance, long value) {
+  JsonDocument d;
+  d["requestId"] = String((uint32_t)esp_random(), HEX);
+  JsonObject p = d["payload"].to<JsonObject>();
+  p["sku"] = li.sku; p["device"] = li.id;
+  JsonObject c = p["capability"].to<JsonObject>();
+  c["type"] = type; c["instance"] = instance; c["value"] = value;
+  String body, resp; serializeJson(d, body);
+  int code = cloudCall("POST", "/device/control", body, resp);
+  if (code != 200) {
+    Lk l;
+    s_lastErr = code == 429 ? "Govee says too many commands - wait a minute" : code == 401 ? "Govee rejected the API key" : "Govee cloud: HTTP " + String(code);
+    LOGI("govee: cloud %s failed (%d) %s", instance, code, resp.substring(0, 120).c_str());
+    return false;
+  }
+  return true;
+}
+
+static String displayName(const Light &li) {
+  if (s_names.count(li.id) && s_names[li.id].length()) return s_names[li.id];
+  return li.cloudName;
+}
+
+// Which lights a step addresses: "all", a friendly name (yours or the Govee app's), or a device id.
+static std::vector<Light> targets(const String &dev) {
+  std::vector<Light> out;
   Lk l;
   for (auto &li : s_lights) {
-    String nm = s_names.count(li.id) ? s_names[li.id] : "";
-    if (dev == "all" || dev.equalsIgnoreCase(nm) || dev == li.id) ips.push_back(li.ip);
+    if (dev == "all" || dev.equalsIgnoreCase(displayName(li)) || dev.equalsIgnoreCase(li.cloudName) || dev == li.id) out.push_back(li);
   }
-  return ips;
+  return out;
 }
+
+static bool lanFresh(const Light &li) { return li.ip.length() && millis() - li.seenMs < 15 * 60000; }
 
 static void runScene(int idx) {
   Scene sc;
   { Lk l; if (idx < 0 || idx >= (int)s_scenes.size()) return; sc = s_scenes[idx]; }
+  bool haveKey; { Lk l; haveKey = s_apiKey.length() > 0; }
   if (s_lights.empty() || millis() - s_lastScan > 10 * 60000) doScan(1500);   // IPs may have changed
+  if (haveKey && (!s_cloudListAt || millis() - s_cloudListAt > 30 * 60000)) cloudList();
+  { Lk l; s_lastErr = ""; }
   int sent = 0;
   for (auto &st : sc.steps) {
-    for (auto &ip : targets(st.dev)) {
-      char js[160];
-      if (st.power >= 0) { snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"turn\",\"data\":{\"value\":%d}}}", st.power); sendTo(ip, js); }
-      if (st.power != 0 && st.hasColor) {
-        snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"colorwc\",\"data\":{\"color\":{\"r\":%u,\"g\":%u,\"b\":%u},\"colorTemInKelvin\":0}}}", st.r, st.g, st.b);
-        sendTo(ip, js);
-      }
-      if (st.power != 0 && st.bright > 0) { snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"brightness\",\"data\":{\"value\":%d}}}", st.bright); sendTo(ip, js); }
+    for (auto &li : targets(st.dev)) {
+      if (lanFresh(li)) {
+        char js[160];
+        if (st.power >= 0) { snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"turn\",\"data\":{\"value\":%d}}}", st.power); sendTo(li.ip, js); }
+        if (st.power != 0 && st.hasColor) {
+          snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"colorwc\",\"data\":{\"color\":{\"r\":%u,\"g\":%u,\"b\":%u},\"colorTemInKelvin\":0}}}", st.r, st.g, st.b);
+          sendTo(li.ip, js);
+        }
+        if (st.power != 0 && st.bright > 0) { snprintf(js, sizeof js, "{\"msg\":{\"cmd\":\"brightness\",\"data\":{\"value\":%d}}}", st.bright); sendTo(li.ip, js); }
+      } else if (li.cloud && haveKey) {
+        if (st.power >= 0) cloudControl(li, "devices.capabilities.on_off", "powerSwitch", st.power);
+        if (st.power != 0 && st.hasColor) cloudControl(li, "devices.capabilities.color_setting", "colorRgb", ((long)st.r << 16) | (st.g << 8) | st.b);
+        if (st.power != 0 && st.bright > 0) cloudControl(li, "devices.capabilities.range", "brightness", st.bright);
+      } else continue;
       sent++;
     }
   }
+  if (!sent) { Lk l; if (s_lastErr.isEmpty()) s_lastErr = haveKey ? "No matching lights found" : "No lights found - add your Govee API key in Settings"; }
+  { Lk l; if (s_lastErr.length()) s_pendingToast = s_lastErr; }
   LOGI("govee: scene '%s' sent to %d light(s)", sc.name.c_str(), sent);
 }
 
@@ -143,11 +228,15 @@ static void task(void *) {
     if (xQueueReceive(s_q, &j, pdMS_TO_TICKS(500)) == pdTRUE) {
       if (!WiFi.isConnected()) continue;
       openUdp();
-      if (j.kind == J_SCAN) doScan(2000);
+      if (j.kind == J_SCAN) { doScan(2000); bool k; { Lk l; k = s_apiKey.length() > 0; } if (k) cloudList(); }
       else if (j.kind == J_SCENE) runScene(j.scene);
       else if (j.kind == J_TEST) {
-        String ip; { Lk l; for (auto &li : s_lights) if (li.id == j.id) ip = li.ip; }
-        if (ip.length()) {
+        Light t; bool have = false; { Lk l; for (auto &li : s_lights) if (li.id == j.id) { t = li; have = true; } }
+        String ip = have && lanFresh(t) ? t.ip : "";
+        if (have && ip.isEmpty() && t.cloud) {
+          cloudControl(t, "devices.capabilities.on_off", "powerSwitch", 0); vTaskDelay(pdMS_TO_TICKS(1500));
+          cloudControl(t, "devices.capabilities.on_off", "powerSwitch", 1);
+        } else if (ip.length()) {
           for (int i = 0; i < 2; i++) {
             sendTo(ip, "{\"msg\":{\"cmd\":\"turn\",\"data\":{\"value\":0}}}"); vTaskDelay(pdMS_TO_TICKS(600));
             sendTo(ip, "{\"msg\":{\"cmd\":\"turn\",\"data\":{\"value\":1}}}"); vTaskDelay(pdMS_TO_TICKS(600));
@@ -170,7 +259,7 @@ void goveeStart() {
   if (!s_mtx) s_mtx = xSemaphoreCreateMutex();
   goveeApplySettings();
   s_q = xQueueCreate(6, sizeof(Job));
-  xTaskCreatePinnedToCore(task, "govee", 6144, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(task, "govee", 12288, nullptr, 1, nullptr, 0);   // TLS for the cloud API
 }
 
 static bool post(Job j) { return s_q && xQueueSend(s_q, &j, 0) == pdTRUE; }
@@ -196,12 +285,16 @@ bool goveeRunScene(const String &which, String &err) {
   return true;
 }
 
+String goveeLastError() { Lk l; return s_lastErr; }
+String goveeTakeToast() { if (!s_mtx) return ""; Lk l; String t = s_pendingToast; s_pendingToast = ""; return t; }
 void goveeDevices(JsonArray out) {
   Lk l;
   for (auto &li : s_lights) {
     JsonObject o = out.add<JsonObject>();
     o["id"] = li.id; o["sku"] = li.sku; o["ip"] = li.ip;
     o["name"] = s_names.count(li.id) ? s_names[li.id] : "";
+    o["cloud_name"] = li.cloudName;
+    o["via"] = lanFresh(li) ? "lan" : li.cloud ? "cloud" : "lan (not seen lately)";
     o["age_s"] = (millis() - li.seenMs) / 1000;
   }
 }

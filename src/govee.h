@@ -11,4 +11,6 @@ void goveeApplySettings();
 void goveeScan();                        // ask lights to report (results within ~2 s)
 void goveeDevices(JsonArray out);        // lights seen: id, sku, ip, name, age
 bool goveeRunScene(const String &nameOrIndex, String &err);
-bool goveeTest(const String &id);        // blink one light so you can tell which it is
+bool goveeTest(const String &id);
+String goveeLastError();
+String goveeTakeToast();                 // error to show on the display once (main loop)                 // problem from the last scene/command ("" = fine)        // blink one light so you can tell which it is

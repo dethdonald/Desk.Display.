@@ -347,6 +347,7 @@ static void safeLoop() {
 }
 
 void loop() {
+  { String t = goveeTakeToast(); if (t.length()) uiToast(t, 3500); }
   if (s_safeMode) { safeLoop(); return; }
   static bool healthy = false;
   if (!healthy && millis() > 30000) { healthy = true; s_bcCrashes = 0; bootStep("running", false); esp_core_dump_image_erase(); }
