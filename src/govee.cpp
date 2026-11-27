@@ -128,6 +128,8 @@ static int cloudCall(const char *method, const String &path, const String &body,
   if (!http.begin(tls, String(CLOUD) + path)) return -1;
   http.addHeader("Govee-API-Key", key);
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("Accept", "application/json");
+  http.setUserAgent("govee-ambient/1.1");
   int code = !strcmp(method, "GET") ? http.GET() : http.POST(body);
   resp = code > 0 ? http.getString() : "";
   http.end();
@@ -148,10 +150,22 @@ static void cloudList() {
     return;
   }
   JsonDocument d;
-  if (deserializeJson(d, resp)) return;
+  DeserializationError je = deserializeJson(d, resp);
+  LOGI("govee: device list %u bytes: %s", (unsigned)resp.length(), resp.substring(0, 200).c_str());
+  if (je) { Lk l; s_lastErr = "Couldn't read Govee's reply (" + String(je.c_str()) + ", " + String(resp.length()) + " bytes)"; return; }
+  JsonArray list = d["data"].as<JsonArray>();
+  if (list.isNull()) list = d["data"]["devices"].as<JsonArray>();
+  if (list.isNull()) list = d["payload"]["devices"].as<JsonArray>();
+  if (list.isNull() || list.size() == 0) {
+    Lk l;
+    String msg = (const char *)(d["message"] | ""); if (msg.isEmpty()) msg = (const char *)(d["msg"] | "");
+    int c = d["code"] | 0;
+    s_lastErr = "Govee's cloud returned no lights" + (c || msg.length() ? " (" + String(c) + " " + msg + ")" : String("")) + ": " + resp.substring(0, 120);
+    return;
+  }
   Lk l;
   s_lastErr = "";
-  for (JsonObject x : d["data"].as<JsonArray>()) {
+  for (JsonObject x : list) {
     String id = (const char *)(x["device"] | "");
     if (id.isEmpty()) continue;
     bool found = false;
@@ -245,6 +259,7 @@ static void task(void *) {
         if (k) cloudList();
         Lk l;
         if (s_lights.empty() && s_lastErr.isEmpty()) s_lastErr = k ? "Govee's cloud returned no lights for this API key" : "No API key saved, and no lights answered on the network";
+        if (!s_lights.empty() && s_lastErr.startsWith("Govee's cloud returned no lights")) s_lastErr = "";
       }
       else if (j.kind == J_SCENE) runScene(j.scene);
       else if (j.kind == J_TEST) {
