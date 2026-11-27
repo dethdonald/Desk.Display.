@@ -22,6 +22,7 @@ static bool s_enabled = true;
 static String s_apiKey;                                   // Govee cloud API key (for lights without LAN Control)
 static String s_lastErr;
 static String s_pendingToast;
+static volatile bool s_busy = false;
 static uint32_t s_cloudListAt = 0;
 static QueueHandle_t s_q = nullptr;                       // jobs for the task
 static WiFiUDP s_udp;
@@ -137,7 +138,15 @@ static void cloudList() {
   String resp;
   int code = cloudCall("GET", "/user/devices", "", resp);
   s_cloudListAt = millis();
-  if (code != 200) { Lk l; s_lastErr = code == 401 ? "Govee rejected the API key" : "Govee cloud: HTTP " + String(code); LOGI("govee: device list failed (%d)", code); return; }
+  if (code != 200) {
+    Lk l;
+    s_lastErr = code == 401 || code == 403 ? "Govee rejected the API key (check it was copied exactly)"
+              : code == 429 ? "Govee says too many requests - try again in a minute"
+              : code < 0 ? "Couldn't reach Govee's cloud (" + String(HTTPClient::errorToString(code)) + ")"
+              : "Govee cloud: HTTP " + String(code) + " " + resp.substring(0, 80);
+    LOGI("govee: device list failed (%d) %s", code, resp.substring(0, 160).c_str());
+    return;
+  }
   JsonDocument d;
   if (deserializeJson(d, resp)) return;
   Lk l;
@@ -226,9 +235,17 @@ static void task(void *) {
   for (;;) {
     Job j;
     if (xQueueReceive(s_q, &j, pdMS_TO_TICKS(500)) == pdTRUE) {
-      if (!WiFi.isConnected()) continue;
+      if (!WiFi.isConnected()) { Lk l; s_lastErr = "Wi-Fi not connected"; continue; }
+      s_busy = true;
       openUdp();
-      if (j.kind == J_SCAN) { doScan(2000); bool k; { Lk l; k = s_apiKey.length() > 0; } if (k) cloudList(); }
+      if (j.kind == J_SCAN) {
+        { Lk l; s_lastErr = ""; }
+        doScan(2000);
+        bool k; { Lk l; k = s_apiKey.length() > 0; }
+        if (k) cloudList();
+        Lk l;
+        if (s_lights.empty() && s_lastErr.isEmpty()) s_lastErr = k ? "Govee's cloud returned no lights for this API key" : "No API key saved, and no lights answered on the network";
+      }
       else if (j.kind == J_SCENE) runScene(j.scene);
       else if (j.kind == J_TEST) {
         Light t; bool have = false; { Lk l; for (auto &li : s_lights) if (li.id == j.id) { t = li; have = true; } }
@@ -244,6 +261,7 @@ static void task(void *) {
         }
       }
     }
+    s_busy = false;
     if (s_udpOpen) pollReplies();
     // Rescan now and then so lights that got a new IP are followed.
     bool enabled; { Lk l; enabled = s_enabled && !s_scenes.empty(); }
@@ -285,6 +303,7 @@ bool goveeRunScene(const String &which, String &err) {
   return true;
 }
 
+bool goveeBusy() { return s_busy || (s_q && uxQueueMessagesWaiting(s_q) > 0); }
 String goveeLastError() { Lk l; return s_lastErr; }
 String goveeTakeToast() { if (!s_mtx) return ""; Lk l; String t = s_pendingToast; s_pendingToast = ""; return t; }
 void goveeDevices(JsonArray out) {

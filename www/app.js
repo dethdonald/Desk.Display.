@@ -1019,15 +1019,21 @@ function goveeSection(s, sec) {
   const devOptions = () => [["all", "All lights"], ...found.map(d => [nm(d) || d.id, nm(d) || `${d.sku} (${d.ip}) — name it above`]),
     ...[...new Set(g.scenes.flatMap(sc => (sc.steps || []).map(st => st.dev)))].filter(n => n && n !== "all" && !found.some(d => (nm(d) || d.id) === n || d.cloud_name === n)).map(n => [n, n + " (not found yet)"])];
   const drawLights = () => {
-    lightsBox.replaceChildren(...(found.length ? found.map(d => h("div", { class: "list-item" },
+    lightsBox.replaceChildren(...(lastErr ? [h("div", { class: "warnbar" }, lastErr)] : []),...(found.length ? found.map(d => h("div", { class: "list-item" },
       h("span", { class: "grow" }, h("b", {}, d.cloud_name || d.sku || "Govee light"), h("span", { class: "small muted" }, ` ${d.sku}${d.ip ? " · " + d.ip : ""} · via ${d.via}`)),
       inp("text", g.names[d.id] || "", v => { g.names[d.id] = v.trim(); drawScenes(); }, { placeholder: d.cloud_name ? "Rename (optional)" : "Name, e.g. Bedside", style: { maxWidth: "170px" } }),
       h("button", { class: "btn sm", title: "Blink it twice", onclick: () => api("/api/govee/test", { body: { id: d.id } }).then(() => toast("Blinking…")).catch(e => toast(e.message, true)) }, "Blink")))
       : [h("p", { class: "small muted", style: { margin: 0 } }, g.api_key ? "No lights yet. Save the API key, then press Search again." : "No lights found. Add your Govee API key above (or turn on LAN Control for lights that have it), save, then press Search again.")]));
   };
+  let lastErr = "";
   const load = async (scanFirst) => {
-    if (scanFirst) { lightsBox.replaceChildren(h("span", { class: "small muted" }, "Searching…")); await api("/api/govee/scan", { method: "POST" }).catch(() => { }); await sleep(2600); }
-    try { found = (await api("/api/govee/devices")).devices || []; } catch { found = []; }
+    let r = {};
+    if (scanFirst) {
+      lightsBox.replaceChildren(h("span", { class: "small muted" }, "Searching the network and Govee's cloud…"));
+      await api("/api/govee/scan", { method: "POST" }).catch(() => { });
+      for (let i = 0; i < 15; i++) { await sleep(1000); r = await api("/api/govee/devices").catch(() => ({})); if (i >= 2 && !r.searching) break; }
+    } else r = await api("/api/govee/devices").catch(() => ({}));
+    found = r.devices || []; lastErr = r.error || "";
     drawLights(); drawScenes();
   };
   const drawScenes = () => {

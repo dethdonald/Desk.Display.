@@ -239,7 +239,7 @@ void webStart() {
     });
   // ---- Govee lights (LAN API)
   s_server.on(AsyncURIMatcher::exact("/api/govee/devices"), HTTP_GET, [](AsyncWebServerRequest *r) {
-    JsonDocument d; goveeDevices(d["devices"].to<JsonArray>()); String s; serializeJson(d, s); sendJson(r, 200, s);
+    JsonDocument d; goveeDevices(d["devices"].to<JsonArray>()); d["error"] = goveeLastError(); d["searching"] = goveeBusy(); String s; serializeJson(d, s); sendJson(r, 200, s);
   }).addMiddleware(&s_auth);
   s_server.on(AsyncURIMatcher::exact("/api/govee/scan"), HTTP_POST, [](AsyncWebServerRequest *r) { goveeScan(); ok(r); }).addMiddleware(&s_auth);
   jsonRoute("/api/govee/test", [](AsyncWebServerRequest *r, JsonVariant &j) {
