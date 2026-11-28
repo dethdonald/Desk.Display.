@@ -1126,6 +1126,7 @@ static bool buildFromDoc(JsonDocument *doc) {
     lv_obj_add_event_cb(pg.scr, screenEventCb, LV_EVENT_PRESS_LOST, nullptr);
     pg.canvas = plainObj(pg.scr);
     lv_obj_set_size(pg.canvas, LCD_W, LCD_H);
+    lv_obj_add_flag(pg.canvas, LV_OBJ_FLAG_EVENT_BUBBLE);   // button presses must reach the screen's gesture handler
     for (JsonObjectConst wj : pj["widgets"].as<JsonArrayConst>()) buildWidget(pg, wj);
     pages.push_back(std::move(pg));
   }
